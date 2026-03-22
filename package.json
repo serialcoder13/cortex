@@ -1,0 +1,17 @@
+{
+  "name": "cortex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A second brain application, free and fast. With LLMs it will get wings.",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "clean": "turbo clean"
+  },
+  "devDependencies": {
+    "turbo": "^2"
+  },
+  "packageManager": "pnpm@10.32.1"
+}

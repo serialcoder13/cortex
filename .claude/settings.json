@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:v2.tauri.app)",
+      "WebSearch",
+      "Bash(pnpm --version)",
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(cargo tauri:*)",
+      "Bash(npm --version)",
+      "Bash(rustup --version)",
+      "Bash(npm install:*)",
+      "Bash(curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs)",
+      "Bash(sh -s -- -y)",
+      "Bash(source \"$HOME/.cargo/env\")",
+      "Bash(cargo install:*)",
+      "Bash(cargo check:*)",
+      "Bash(export PATH=\"$HOME/.cargo/bin:$PATH\")",
+      "Bash(pnpm install:*)",
+      "Bash(pnpm --filter @cortex/editor build)",
+      "Bash(pnpm --filter @cortex/ui build)",
+      "Bash(pnpm --filter @cortex/bridge build)",
+      "Bash(pnpm --filter @cortex/store build)",
+      "Bash(pnpm --filter @cortex/desktop build)",
+      "Bash(pnpm --filter @cortex/web build)",
+      "Bash(pnpm build:*)",
+      "Bash(timeout 20 pnpm dev)",
+      "Read(//Users/kirangrandhi/.cargo/bin/**)",
+      "Read(//Users/kirangrandhi/.rustup/**)",
+      "Bash(~/.cargo/bin/cargo check:*)",
+      "Bash(~/.cargo/bin/cargo test:*)",
+      "Bash(cargo test:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx turbo:*)",
+      "Bash(xargs -I{} echo \"TypeScript: {} files\")",
+      "Bash(pnpm tauri:build)"
+    ]
+  }
+}

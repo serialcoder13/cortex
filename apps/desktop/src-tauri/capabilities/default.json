@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicegoodthings/nicegoodthings/refs/tags/tauri2/crates/tauri-utils/schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for Cortex",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open"
+  ]
+}

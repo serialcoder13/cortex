@@ -1,0 +1,12 @@
+[package]
+name = "cortex-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core types and traits for Cortex"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+thiserror = "2"
+tokio = { version = "1", features = ["sync"] }
