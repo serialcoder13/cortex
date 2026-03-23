@@ -10,4 +10,5 @@ export type {
   LlmProvider,
   SettingsState,
   StorageBackend,
+  Theme,
 } from "./settings";

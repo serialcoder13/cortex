@@ -4,6 +4,8 @@ export type StorageBackend = "local" | "tauri-fs" | "sqlite";
 
 export type LlmProvider = "deepseek" | "openai" | "anthropic" | "ollama" | "custom";
 
+export type Theme = "light" | "dark" | "system";
+
 export interface ApiKeyEntry {
   provider: LlmProvider;
   key: string;
@@ -18,6 +20,8 @@ export interface SettingsState {
   apiKeys: Record<string, string>;
   /** Whether auto-organization agent is enabled */
   autoOrganize: boolean;
+  /** Current theme */
+  theme: Theme;
   /** Current vault path */
   vaultPath: string | null;
 
@@ -31,6 +35,8 @@ export interface SettingsState {
   removeApiKey: (provider: string) => void;
   /** Toggle auto-organization agent */
   setAutoOrganize: (enabled: boolean) => void;
+  /** Set the theme */
+  setTheme: (theme: Theme) => void;
   /** Set the vault path */
   setVaultPath: (path: string | null) => void;
   /** Reset all settings to defaults */
@@ -42,6 +48,7 @@ const defaultSettings = {
   llmProvider: "openai" as LlmProvider,
   apiKeys: {} as Record<string, string>,
   autoOrganize: false,
+  theme: "system" as Theme,
   vaultPath: null as string | null,
 };
 
@@ -64,6 +71,8 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     }),
 
   setAutoOrganize: (autoOrganize) => set({ autoOrganize }),
+
+  setTheme: (theme) => set({ theme }),
 
   setVaultPath: (vaultPath) => set({ vaultPath }),
 

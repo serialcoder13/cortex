@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { storage } from "../lib/storage";
+import { CalendarSkeleton } from "../components/Skeleton";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = [
@@ -214,9 +215,7 @@ export function CalendarView() {
       </div>
 
       {loading ? (
-        <div className="flex h-64 items-center justify-center text-neutral-500">
-          Loading...
-        </div>
+        <CalendarSkeleton />
       ) : (
         <>
           {/* Day-of-week headers */}

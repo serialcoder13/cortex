@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { storage, type DocumentMeta } from "../lib/storage";
+import { DocumentListSkeleton } from "../components/Skeleton";
 
 function formatDate(iso: string): string {
   try {
@@ -142,9 +143,7 @@ export function DocumentBrowser() {
 
       {/* Document list */}
       {loading ? (
-        <div className="flex h-64 items-center justify-center text-neutral-500">
-          Loading...
-        </div>
+        <DocumentListSkeleton />
       ) : filteredDocs.length === 0 ? (
         <div className="flex h-64 flex-col items-center justify-center gap-2 text-neutral-500">
           <p className="text-sm">

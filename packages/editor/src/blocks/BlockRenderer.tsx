@@ -4,8 +4,8 @@
 // data-block-id. The content area is marked with data-content.
 // ============================================================
 
-import React, { useCallback } from "react";
-import type { Block, BlockProps } from "../core/types";
+import React, { useCallback, useRef } from "react";
+import type { Block } from "../core/types";
 import { TextContent } from "./TextContent";
 
 interface BlockRendererProps {
@@ -251,15 +251,78 @@ function ImageBlock({ block }: { block: Block }) {
   const src = block.props.src;
   const alt = block.props.alt ?? "";
   const caption = block.props.caption;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = useCallback(
+    (file: File) => {
+      if (!file.type.startsWith("image/")) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        globalThis.dispatchEvent(
+          new CustomEvent("cortex-image-upload", {
+            detail: { blockId: block.id, dataUrl, fileName: file.name },
+          }),
+        );
+      };
+      reader.readAsDataURL(file);
+    },
+    [block.id],
+  );
+
+  const handleClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) handleFileSelect(file);
+    },
+    [handleFileSelect],
+  );
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const file = e.dataTransfer.files?.[0];
+      if (file) handleFileSelect(file);
+    },
+    [handleFileSelect],
+  );
 
   if (!src) {
     return (
-      <div
-        className="cx-flex cx-h-32 cx-items-center cx-justify-center cx-rounded-lg cx-border cx-border-dashed cx-border-neutral-700 cx-text-neutral-500"
+      <button
+        type="button"
+        className="cx-flex cx-h-48 cx-w-full cx-cursor-pointer cx-flex-col cx-items-center cx-justify-center cx-gap-2 cx-rounded-lg cx-border cx-border-dashed cx-border-neutral-700 cx-bg-transparent cx-text-neutral-500 cx-transition-colors hover:cx-border-neutral-500 hover:cx-bg-neutral-900/50"
         contentEditable={false}
+        onClick={handleClick}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
       >
-        Click to add an image
-      </div>
+        <svg className="cx-h-8 cx-w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"
+          />
+        </svg>
+        <span className="cx-text-sm">Click to upload or drag an image</span>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="cx-hidden"
+          onChange={handleInputChange}
+        />
+      </button>
     );
   }
 

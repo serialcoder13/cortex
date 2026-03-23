@@ -33,7 +33,19 @@
       "Bash(npx tsc:*)",
       "Bash(npx turbo:*)",
       "Bash(xargs -I{} echo \"TypeScript: {} files\")",
-      "Bash(pnpm tauri:build)"
+      "Bash(pnpm tauri:build)",
+      "Bash(chmod +x /Users/kirangrandhi/kiran/cortex/run.sh)",
+      "Bash(ls apps/desktop/tsconfig*.json)",
+      "Bash(ls tsconfig*.json)",
+      "Bash(ls -la /Users/kirangrandhi/kiran/cortex/brain.*)",
+      "Bash(sips -g all /Users/kirangrandhi/kiran/cortex/brain.png)",
+      "Bash(ls -la /Users/kirangrandhi/kiran/cortex/facebrain.* /Users/kirangrandhi/kiran/cortex/logotext.*)",
+      "Bash(ls /Users/kirangrandhi/kiran/cortex/apps/desktop/tailwind.config.* /Users/kirangrandhi/kiran/cortex/apps/desktop/postcss.config.*)",
+      "Bash(ls /Users/kirangrandhi/kiran/cortex/apps/desktop/postcss.config.*)",
+      "Bash(ls /Users/kirangrandhi/kiran/cortex/apps/desktop/tailwind.config.*)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm tauri:*)",
+      "Bash(xcrun simctl:*)"
     ]
   }
 }

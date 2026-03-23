@@ -1,7 +1,8 @@
 // ============================================================
 // CortexEditor — the main editor component.
 // Wires together: document model, input handling, selection,
-// history (undo/redo), block rendering, and auto-save hooks.
+// history (undo/redo), block rendering, auto-save hooks,
+// slash command menu, floating toolbar, and drag handles.
 // ============================================================
 
 import React, {
@@ -16,6 +17,8 @@ import type {
   Block,
   BlockType,
   EditorDocument,
+  Mark,
+  MarkType,
   Selection as EditorSelection,
   TextSpan,
 } from "./core/types";
@@ -27,6 +30,9 @@ import { handleCopy, handleCut, handlePaste } from "./core/clipboard";
 import { History } from "./core/history";
 import { BlockRenderer } from "./blocks/BlockRenderer";
 import type { ApplyResult } from "./core/operations";
+import { setBlockTypeOp, moveBlockOp, toggleMark as toggleMarkOp, replaceContent } from "./core/operations";
+import { SlashCommandMenu } from "./features/slash-command";
+import { FloatingToolbar } from "./features/toolbar";
 
 // ---- Public API Types ----
 
@@ -54,6 +60,84 @@ export interface CortexEditorRef {
   getDocument: () => EditorDocument;
   setDocument: (doc: EditorDocument) => void;
   insertBlock: (type: BlockType, afterBlockId?: string) => void;
+}
+
+// ---- Slash Command State ----
+
+interface SlashCommandState {
+  active: boolean;
+  blockId: string;
+  filter: string;
+  position: { x: number; y: number };
+}
+
+// ---- Floating Toolbar State ----
+
+interface ToolbarState {
+  active: boolean;
+  position: { x: number; y: number };
+  activeMarks: MarkType[];
+}
+
+// ---- Drag State ----
+
+interface DragState {
+  draggingBlockId: string | null;
+  dropTargetIndex: number | null;
+}
+
+// ---- Helpers ----
+
+/** Get marks active at a given offset within a block */
+function getActiveMarksAtPosition(doc: EditorDocument, blockId: string, offset: number): MarkType[] {
+  const block = findBlock(doc, blockId);
+  if (!block) return [];
+  let pos = 0;
+  for (const span of block.content) {
+    const end = pos + span.text.length;
+    if (offset > pos && offset <= end) {
+      return (span.marks ?? []).map(m => m.type);
+    }
+    pos = end;
+  }
+  return [];
+}
+
+/** Get the bounding rect of the caret (collapsed selection) */
+function getCaretRect(): DOMRect | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  const rect = range.getBoundingClientRect();
+  // For collapsed selections, getBoundingClientRect returns empty
+  if (rect.width === 0 && rect.height === 0) {
+    // Insert a temporary span to measure
+    const span = document.createElement("span");
+    span.textContent = "\u200b";
+    range.insertNode(span);
+    const spanRect = span.getBoundingClientRect();
+    span.remove();
+    // Restore selection
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return spanRect;
+  }
+  return rect;
+}
+
+// ---- Drag Handle SVG ----
+
+function DragHandleIcon() {
+  return (
+    <svg width="14" height="20" viewBox="0 0 14 20" fill="currentColor">
+      <circle cx="4" cy="4" r="1.5" />
+      <circle cx="10" cy="4" r="1.5" />
+      <circle cx="4" cy="10" r="1.5" />
+      <circle cx="10" cy="10" r="1.5" />
+      <circle cx="4" cy="16" r="1.5" />
+      <circle cx="10" cy="16" r="1.5" />
+    </svg>
+  );
 }
 
 // ---- Component ----
@@ -84,6 +168,41 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
     const docRef = useRef(doc);
     docRef.current = doc;
 
+    // Slash command state
+    const [slashCommand, setSlashCommand] = useState<SlashCommandState>({
+      active: false,
+      blockId: "",
+      filter: "",
+      position: { x: 0, y: 0 },
+    });
+
+    // Floating toolbar state
+    const [toolbar, setToolbar] = useState<ToolbarState>({
+      active: false,
+      position: { x: 0, y: 0 },
+      activeMarks: [],
+    });
+
+    // Drag state
+    const [dragState, setDragState] = useState<DragState>({
+      draggingBlockId: null,
+      dropTargetIndex: null,
+    });
+
+    // Ref to track selection for toolbar/slash command interactions
+    const selectionRef = useRef(selection);
+    selectionRef.current = selection;
+
+    // ---- Idle timer ----
+    const resetIdleTimer = useCallback(() => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      if (onIdle) {
+        idleTimerRef.current = setTimeout(() => {
+          onIdle(docRef.current);
+        }, idleDebounceMs);
+      }
+    }, [onIdle, idleDebounceMs]);
+
     // ---- Apply a result (doc + ops + selection) ----
     const apply = useCallback(
       (result: ApplyResult, recordHistory = true) => {
@@ -103,18 +222,8 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         onChange?.(result.doc);
         resetIdleTimer();
       },
-      [onChange, selection],
+      [onChange, selection, resetIdleTimer],
     );
-
-    // ---- Idle timer ----
-    const resetIdleTimer = useCallback(() => {
-      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-      if (onIdle) {
-        idleTimerRef.current = setTimeout(() => {
-          onIdle(docRef.current);
-        }, idleDebounceMs);
-      }
-    }, [onIdle, idleDebounceMs]);
 
     useEffect(() => {
       return () => {
@@ -135,6 +244,249 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       return () => cancelAnimationFrame(frame);
     }, [selection, doc.version]);
 
+    // ---- Slash Command Helpers ----
+
+    /** Check if slash command should be active and update state */
+    const updateSlashCommandState = useCallback(
+      (currentDoc: EditorDocument, sel: EditorSelection | null) => {
+        if (!sel) {
+          if (slashCommand.active) {
+            setSlashCommand(prev => ({ ...prev, active: false }));
+          }
+          return;
+        }
+
+        // Only for collapsed selection
+        if (sel.anchor.blockId !== sel.focus.blockId || sel.anchor.offset !== sel.focus.offset) {
+          if (slashCommand.active) {
+            setSlashCommand(prev => ({ ...prev, active: false }));
+          }
+          return;
+        }
+
+        const block = findBlock(currentDoc, sel.focus.blockId);
+        if (!block) {
+          if (slashCommand.active) {
+            setSlashCommand(prev => ({ ...prev, active: false }));
+          }
+          return;
+        }
+
+        const text = getPlainText(block.content);
+
+        // Check if text starts with "/"
+        if (text.startsWith("/")) {
+          const filter = text.slice(1); // Everything after "/"
+          const caretRect = getCaretRect();
+          if (caretRect) {
+            setSlashCommand({
+              active: true,
+              blockId: sel.focus.blockId,
+              filter,
+              position: { x: caretRect.left, y: caretRect.bottom + 4 },
+            });
+          }
+        } else if (slashCommand.active) {
+          setSlashCommand(prev => ({ ...prev, active: false }));
+        }
+      },
+      [slashCommand.active],
+    );
+
+    /** Handle slash command item selection */
+    const handleSlashSelect = useCallback(
+      (type: BlockType) => {
+        const blockId = slashCommand.blockId;
+        const block = findBlock(docRef.current, blockId);
+        if (!block) return;
+
+        // Clear the "/" text from the block
+        const text = getPlainText(block.content);
+        let currentDoc = docRef.current;
+
+        if (text.length > 0) {
+          const clearResult = replaceContent(currentDoc, blockId, []);
+          currentDoc = clearResult.doc;
+          // Record as part of the same operation batch
+          if (clearResult.ops.length > 0) {
+            historyRef.current.push(clearResult.ops, selectionRef.current, clearResult.selection);
+          }
+        }
+
+        // Set the block type
+        const result = setBlockTypeOp(currentDoc, blockId, type);
+        if (result.doc !== currentDoc) {
+          setDoc(result.doc);
+          docRef.current = result.doc;
+
+          if (result.ops.length > 0) {
+            historyRef.current.push(result.ops, selectionRef.current, result.selection);
+          }
+
+          // Set selection to beginning of the block
+          const newSel: EditorSelection = {
+            anchor: { blockId, offset: 0 },
+            focus: { blockId, offset: 0 },
+          };
+          setSelection(newSel);
+
+          onChange?.(result.doc);
+          resetIdleTimer();
+        }
+
+        // Close the menu
+        setSlashCommand({ active: false, blockId: "", filter: "", position: { x: 0, y: 0 } });
+      },
+      [slashCommand.blockId, onChange, resetIdleTimer],
+    );
+
+    /** Close slash command menu */
+    const handleSlashClose = useCallback(() => {
+      setSlashCommand({ active: false, blockId: "", filter: "", position: { x: 0, y: 0 } });
+    }, []);
+
+    // ---- Floating Toolbar Helpers ----
+
+    /** Update toolbar state based on current selection */
+    const updateToolbarState = useCallback(
+      (currentDoc: EditorDocument, sel: EditorSelection | null) => {
+        if (!sel) {
+          if (toolbar.active) {
+            setToolbar(prev => ({ ...prev, active: false }));
+          }
+          return;
+        }
+
+        // Check if selection is non-collapsed
+        const isCollapsed =
+          sel.anchor.blockId === sel.focus.blockId &&
+          sel.anchor.offset === sel.focus.offset;
+
+        if (isCollapsed) {
+          if (toolbar.active) {
+            setToolbar(prev => ({ ...prev, active: false }));
+          }
+          return;
+        }
+
+        // Get the selection rect from the browser
+        const domSel = window.getSelection();
+        if (!domSel || domSel.rangeCount === 0) {
+          if (toolbar.active) {
+            setToolbar(prev => ({ ...prev, active: false }));
+          }
+          return;
+        }
+
+        const range = domSel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+
+        if (rect.width === 0 && rect.height === 0) {
+          if (toolbar.active) {
+            setToolbar(prev => ({ ...prev, active: false }));
+          }
+          return;
+        }
+
+        // Get active marks at the focus position
+        const marks = getActiveMarksAtPosition(currentDoc, sel.focus.blockId, sel.focus.offset);
+
+        setToolbar({
+          active: true,
+          position: {
+            x: rect.left + rect.width / 2,
+            y: rect.top - 10,
+          },
+          activeMarks: marks,
+        });
+      },
+      [toolbar.active],
+    );
+
+    /** Handle mark toggle from toolbar */
+    const handleToolbarToggleMark = useCallback(
+      (mark: Mark) => {
+        const sel = selectionRef.current;
+        if (!sel) return;
+
+        // For same-block selections
+        if (sel.anchor.blockId === sel.focus.blockId) {
+          const from = Math.min(sel.anchor.offset, sel.focus.offset);
+          const to = Math.max(sel.anchor.offset, sel.focus.offset);
+          const result = toggleMarkOp(docRef.current, sel.anchor.blockId, from, to, mark);
+          if (result.doc !== docRef.current) {
+            apply(result);
+          }
+        }
+
+        // Update toolbar marks after toggling
+        requestAnimationFrame(() => {
+          const currentSel = selectionRef.current;
+          if (currentSel) {
+            const marks = getActiveMarksAtPosition(
+              docRef.current,
+              currentSel.focus.blockId,
+              currentSel.focus.offset,
+            );
+            setToolbar(prev => ({
+              ...prev,
+              activeMarks: marks,
+            }));
+          }
+        });
+      },
+      [apply],
+    );
+
+    /** Close floating toolbar */
+    const handleToolbarClose = useCallback(() => {
+      setToolbar({ active: false, position: { x: 0, y: 0 }, activeMarks: [] });
+    }, []);
+
+    // ---- Drag Handle Callbacks ----
+
+    const handleDragStart = useCallback(
+      (e: React.DragEvent, blockId: string) => {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", blockId);
+        setDragState({ draggingBlockId: blockId, dropTargetIndex: null });
+      },
+      [],
+    );
+
+    const handleDragOver = useCallback(
+      (e: React.DragEvent, blockIndex: number) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setDragState(prev => ({ ...prev, dropTargetIndex: blockIndex }));
+      },
+      [],
+    );
+
+    const handleDragLeave = useCallback(() => {
+      setDragState(prev => ({ ...prev, dropTargetIndex: null }));
+    }, []);
+
+    const handleDrop = useCallback(
+      (e: React.DragEvent, targetIndex: number) => {
+        e.preventDefault();
+        const blockId = e.dataTransfer.getData("text/plain");
+        if (!blockId) return;
+
+        const result = moveBlockOp(docRef.current, blockId, targetIndex);
+        if (result.doc !== docRef.current) {
+          apply(result);
+        }
+
+        setDragState({ draggingBlockId: null, dropTargetIndex: null });
+      },
+      [apply],
+    );
+
+    const handleDragEnd = useCallback(() => {
+      setDragState({ draggingBlockId: null, dropTargetIndex: null });
+    }, []);
+
     // ---- Event Handlers ----
 
     const handleSelectionChange = useCallback(() => {
@@ -146,8 +498,15 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       const sel = readSelection(rootRef.current, doc);
       if (sel) {
         setSelection(sel);
+
+        // Update slash command and toolbar states
+        // Use a microtask to ensure DOM is settled
+        requestAnimationFrame(() => {
+          updateSlashCommandState(docRef.current, sel);
+          updateToolbarState(docRef.current, sel);
+        });
       }
-    }, [doc]);
+    }, [doc, updateSlashCommandState, updateToolbarState]);
 
     useEffect(() => {
       document.addEventListener("selectionchange", handleSelectionChange);
@@ -157,6 +516,26 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
     const onKeyDown = useCallback(
       (e: React.KeyboardEvent) => {
         if (readOnly || isComposing.current) return;
+
+        // If slash command is active, let it handle Arrow/Enter/Escape
+        if (slashCommand.active) {
+          if (
+            e.key === "ArrowDown" ||
+            e.key === "ArrowUp" ||
+            e.key === "Enter" ||
+            e.key === "Escape"
+          ) {
+            // These are handled by the SlashCommandMenu's document-level keydown listener
+            return;
+          }
+        }
+
+        // Escape closes toolbar
+        if (toolbar.active && e.key === "Escape") {
+          e.preventDefault();
+          handleToolbarClose();
+          return;
+        }
 
         // Undo: Cmd+Z
         if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "z") {
@@ -194,7 +573,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           apply(result);
         }
       },
-      [doc, selection, readOnly, apply, onChange],
+      [doc, selection, readOnly, apply, onChange, slashCommand.active, toolbar.active, handleToolbarClose],
     );
 
     const onBeforeInput = useCallback(
@@ -205,9 +584,18 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         const { result, handled } = handleBeforeInput({ doc, selection }, inputEvent);
         if (handled && result.doc) {
           apply(result);
+
+          // After applying, check for slash command trigger
+          // We schedule this to run after the state update
+          requestAnimationFrame(() => {
+            const currentSel = selectionRef.current;
+            if (currentSel) {
+              updateSlashCommandState(docRef.current, currentSel);
+            }
+          });
         }
       },
-      [doc, selection, readOnly, apply],
+      [doc, selection, readOnly, apply, updateSlashCommandState],
     );
 
     const onCompositionStart = useCallback(() => {
@@ -284,7 +672,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       onBlur?.(docRef.current);
     }, [onBlur]);
 
-    // ---- Todo toggle ----
+    // ---- Checkbox toggle ----
     const onToggleTodo = useCallback(
       (blockId: string) => {
         const newDoc = updateBlock(doc, blockId, (b) => ({
@@ -366,51 +754,111 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
 
     // ---- Render ----
     return (
-      <div
-        ref={rootRef}
-        className={`cx-editor cx-relative cx-min-h-[200px] cx-outline-none ${className ?? ""}`}
-        contentEditable={!readOnly}
-        suppressContentEditableWarning
-        tabIndex={0}
-        role="textbox"
-        aria-multiline="true"
-        aria-placeholder={placeholder}
-        onKeyDown={onKeyDown}
-        onBeforeInput={onBeforeInput}
-        onCompositionStart={onCompositionStart}
-        onCompositionEnd={onCompositionEnd}
-        onCopy={onCopy}
-        onCut={onCut}
-        onPaste={onPaste}
-        onBlur={onEditorBlur}
-        onClick={onRootClick}
-        spellCheck
-      >
-        {isEmpty && !readOnly && (
-          <div
-            className="cx-pointer-events-none cx-absolute cx-left-0 cx-top-0 cx-select-none cx-text-neutral-600"
-            aria-hidden="true"
-          >
-            {placeholder}
-          </div>
-        )}
-        {doc.blocks.map((block) => (
-          <div
-            key={block.id}
-            data-block-id={block.id}
-            className="cx-block-wrapper cx-relative cx-py-0.5"
-          >
-            <BlockRenderer
-              block={
-                block.type === "numberedList"
-                  ? { ...block, props: { ...block.props, number: numberedBlocks.get(block.id) ?? 1 } }
-                  : block
-              }
-              onToggleTodo={onToggleTodo}
-              onToggleCollapse={onToggleCollapse}
+      <div className={`cx-editor-container cx-relative ${className ?? ""}`}>
+        {/* The contentEditable editor area */}
+        <div
+          ref={rootRef}
+          className="cx-editor cx-relative cx-min-h-[200px] cx-outline-none"
+          contentEditable={!readOnly}
+          suppressContentEditableWarning
+          tabIndex={0}
+          role="textbox"
+          aria-multiline="true"
+          aria-placeholder={placeholder}
+          onKeyDown={onKeyDown}
+          onBeforeInput={onBeforeInput}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
+          onCopy={onCopy}
+          onCut={onCut}
+          onPaste={onPaste}
+          onBlur={onEditorBlur}
+          onClick={onRootClick}
+          spellCheck
+        >
+          {isEmpty && !readOnly && (
+            <div
+              className="cx-pointer-events-none cx-absolute cx-left-0 cx-top-0 cx-select-none cx-text-neutral-600"
+              aria-hidden="true"
+            >
+              {placeholder}
+            </div>
+          )}
+          {doc.blocks.map((block, blockIndex) => (
+            <div
+              key={block.id}
+              data-block-id={block.id}
+              className={`cx-block-wrapper cx-group cx-relative cx-py-0.5 ${
+                dragState.draggingBlockId === block.id ? "cx-opacity-50" : ""
+              }`}
+              onDragOver={(e) => handleDragOver(e, blockIndex)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => handleDrop(e, blockIndex)}
+            >
+              {/* Drop indicator line */}
+              {dragState.dropTargetIndex === blockIndex && dragState.draggingBlockId !== block.id && (
+                <div
+                  className="cx-pointer-events-none cx-absolute cx-left-0 cx-right-0 cx-top-0 cx-h-0.5 cx-bg-blue-500"
+                  aria-hidden="true"
+                />
+              )}
+
+              {/* Drag handle */}
+              {!readOnly && (
+                <div
+                  contentEditable={false}
+                  suppressContentEditableWarning
+                  draggable
+                  role="button"
+                  tabIndex={-1}
+                  onDragStart={(e) => handleDragStart(e, block.id)}
+                  onDragEnd={handleDragEnd}
+                  className="cx-absolute cx--left-8 cx-top-1 cx-flex cx-h-6 cx-w-6 cx-cursor-grab cx-items-center cx-justify-center cx-rounded cx-opacity-0 cx-transition-opacity cx-text-neutral-600 hover:cx-bg-neutral-800 hover:cx-text-neutral-400 group-hover:cx-opacity-100 active:cx-cursor-grabbing"
+                  aria-label="Drag to reorder"
+                >
+                  <DragHandleIcon />
+                </div>
+              )}
+
+              <BlockRenderer
+                block={
+                  block.type === "numberedList"
+                    ? { ...block, props: { ...block.props, number: numberedBlocks.get(block.id) ?? 1 } }
+                    : block
+                }
+                onToggleTodo={onToggleTodo}
+                onToggleCollapse={onToggleCollapse}
+              />
+            </div>
+          ))}
+          {/* Drop indicator at the end */}
+          {dragState.dropTargetIndex === doc.blocks.length && dragState.draggingBlockId !== null && (
+            <div
+              className="cx-pointer-events-none cx-h-0.5 cx-bg-blue-500"
+              aria-hidden="true"
             />
-          </div>
-        ))}
+          )}
+        </div>
+
+        {/* Slash Command Menu — rendered outside the contentEditable div */}
+        {slashCommand.active && (
+          <SlashCommandMenu
+            position={slashCommand.position}
+            filter={slashCommand.filter}
+            onSelect={handleSlashSelect}
+            onClose={handleSlashClose}
+          />
+        )}
+
+        {/* Floating Toolbar — rendered outside the contentEditable div */}
+        {toolbar.active && (
+          <FloatingToolbar
+            position={toolbar.position}
+            activeMarks={toolbar.activeMarks}
+            onToggleMark={handleToolbarToggleMark}
+            onClose={handleToolbarClose}
+          />
+        )}
       </div>
     );
   },
