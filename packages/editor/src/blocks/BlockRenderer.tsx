@@ -2,6 +2,7 @@
 // BlockRenderer — renders a single block based on its type.
 // Each block is a contentEditable container identified by
 // data-block-id. The content area is marked with data-content.
+// All colors use CSS variables for theme compatibility.
 // ============================================================
 
 import React, { useCallback, useRef } from "react";
@@ -51,7 +52,7 @@ export function BlockRenderer({ block, onToggleTodo, onToggleCollapse }: BlockRe
 
 function ParagraphBlock({ block }: { block: Block }) {
   return (
-    <div data-content className="cx-min-h-[1.5em] cx-leading-relaxed">
+    <div data-content className="cx-min-h-[1.5em] cx-leading-relaxed cx-py-[1px]">
       <TextContent content={block.content} />
     </div>
   );
@@ -59,9 +60,9 @@ function ParagraphBlock({ block }: { block: Block }) {
 
 function HeadingBlock({ block, level }: { block: Block; level: 1 | 2 | 3 }) {
   const styles = {
-    1: "cx-text-3xl cx-font-bold cx-leading-tight cx-mt-8 cx-mb-2",
-    2: "cx-text-2xl cx-font-semibold cx-leading-tight cx-mt-6 cx-mb-2",
-    3: "cx-text-xl cx-font-semibold cx-leading-snug cx-mt-4 cx-mb-1",
+    1: "cx-text-3xl cx-font-bold cx-leading-tight cx-mt-10 cx-mb-1",
+    2: "cx-text-2xl cx-font-semibold cx-leading-tight cx-mt-8 cx-mb-1",
+    3: "cx-text-xl cx-font-semibold cx-leading-snug cx-mt-6 cx-mb-1",
   };
 
   return (
@@ -73,8 +74,12 @@ function HeadingBlock({ block, level }: { block: Block; level: 1 | 2 | 3 }) {
 
 function BulletListBlock({ block }: { block: Block }) {
   return (
-    <div className="cx-flex cx-gap-2 cx-pl-1">
-      <span className="cx-mt-[0.35em] cx-text-neutral-500 cx-select-none" contentEditable={false}>
+    <div className="cx-flex cx-gap-2 cx-pl-1.5">
+      <span
+        className="cx-mt-[0.35em] cx-select-none"
+        style={{ color: "var(--text-muted)" }}
+        contentEditable={false}
+      >
         •
       </span>
       <div data-content className="cx-min-h-[1.5em] cx-flex-1 cx-leading-relaxed">
@@ -85,12 +90,12 @@ function BulletListBlock({ block }: { block: Block }) {
 }
 
 function NumberedListBlock({ block }: { block: Block }) {
-  // The number is passed as a prop or computed by the parent
   const number = block.props.number ?? 1;
   return (
-    <div className="cx-flex cx-gap-2 cx-pl-1">
+    <div className="cx-flex cx-gap-2 cx-pl-1.5">
       <span
-        className="cx-mt-[0.05em] cx-min-w-[1.2em] cx-text-right cx-text-neutral-500 cx-select-none"
+        className="cx-mt-[0.05em] cx-min-w-[1.2em] cx-text-right cx-select-none"
+        style={{ color: "var(--text-muted)" }}
         contentEditable={false}
       >
         {String(number)}.
@@ -115,28 +120,29 @@ function TodoBlock({ block, onToggle }: { block: Block; onToggle?: (id: string) 
   );
 
   return (
-    <div className="cx-flex cx-gap-2 cx-pl-1">
+    <div className="cx-flex cx-gap-2 cx-pl-1.5">
       <button
         type="button"
-        className={`cx-mt-[0.25em] cx-h-4 cx-w-4 cx-flex-shrink-0 cx-rounded cx-border cx-transition-colors ${
-          checked
-            ? "cx-border-blue-500 cx-bg-blue-500"
-            : "cx-border-neutral-600 cx-bg-transparent hover:cx-border-neutral-400"
-        }`}
+        className="cx-mt-[0.2em] cx-h-[18px] cx-w-[18px] cx-flex-shrink-0 cx-rounded-[3px] cx-border cx-flex cx-items-center cx-justify-center cx-transition-all"
+        style={{
+          borderColor: checked ? "var(--accent)" : "var(--border-secondary)",
+          backgroundColor: checked ? "var(--accent)" : "transparent",
+        }}
         contentEditable={false}
         onClick={handleClick}
         aria-checked={checked}
         role="checkbox"
       >
         {checked && (
-          <svg className="cx-h-full cx-w-full cx-text-white" viewBox="0 0 16 16" fill="currentColor">
+          <svg className="cx-h-3 cx-w-3" viewBox="0 0 16 16" fill="white">
             <path d="M12.207 4.793a1 1 0 0 1 0 1.414l-5 5a1 1 0 0 1-1.414 0l-2-2a1 1 0 0 1 1.414-1.414L6.5 9.086l4.293-4.293a1 1 0 0 1 1.414 0z" />
           </svg>
         )}
       </button>
       <div
         data-content
-        className={`cx-min-h-[1.5em] cx-flex-1 cx-leading-relaxed ${checked ? "cx-text-neutral-500 cx-line-through" : ""}`}
+        className={`cx-min-h-[1.5em] cx-flex-1 cx-leading-relaxed cx-transition-colors ${checked ? "cx-line-through" : ""}`}
+        style={checked ? { color: "var(--text-muted)" } : undefined}
       >
         <TextContent content={block.content} />
       </div>
@@ -147,17 +153,31 @@ function TodoBlock({ block, onToggle }: { block: Block; onToggle?: (id: string) 
 function CodeBlock({ block }: { block: Block }) {
   const language = block.props.language ?? "";
   return (
-    <div className="cx-my-2 cx-rounded-lg cx-bg-neutral-900 cx-border cx-border-neutral-800">
+    <div
+      className="cx-my-2 cx-rounded-lg cx-border"
+      style={{
+        backgroundColor: "var(--bg-secondary)",
+        borderColor: "var(--border-primary)",
+      }}
+    >
       {language && (
         <div
-          className="cx-px-4 cx-py-1 cx-text-xs cx-text-neutral-500 cx-border-b cx-border-neutral-800 cx-select-none"
+          className="cx-px-4 cx-py-1 cx-text-xs cx-border-b cx-select-none"
+          style={{
+            color: "var(--text-muted)",
+            borderColor: "var(--border-primary)",
+          }}
           contentEditable={false}
         >
           {language}
         </div>
       )}
       <pre className="cx-p-4 cx-overflow-x-auto">
-        <code data-content className="cx-font-mono cx-text-sm cx-leading-relaxed cx-text-neutral-200">
+        <code
+          data-content
+          className="cx-font-mono cx-text-sm cx-leading-relaxed"
+          style={{ color: "var(--text-primary)" }}
+        >
           <TextContent content={block.content} />
         </code>
       </pre>
@@ -168,8 +188,16 @@ function CodeBlock({ block }: { block: Block }) {
 function QuoteBlock({ block }: { block: Block }) {
   return (
     <div className="cx-flex">
-      <div className="cx-mr-3 cx-w-1 cx-flex-shrink-0 cx-rounded-full cx-bg-neutral-600" contentEditable={false} />
-      <div data-content className="cx-min-h-[1.5em] cx-flex-1 cx-italic cx-text-neutral-300 cx-leading-relaxed">
+      <div
+        className="cx-mr-3 cx-w-1 cx-flex-shrink-0 cx-rounded-full"
+        style={{ backgroundColor: "var(--accent)" }}
+        contentEditable={false}
+      />
+      <div
+        data-content
+        className="cx-min-h-[1.5em] cx-flex-1 cx-italic cx-leading-relaxed"
+        style={{ color: "var(--text-secondary)" }}
+      >
         <TextContent content={block.content} />
       </div>
     </div>
@@ -178,18 +206,15 @@ function QuoteBlock({ block }: { block: Block }) {
 
 function CalloutBlock({ block }: { block: Block }) {
   const emoji = block.props.emoji ?? "💡";
-  const color = block.props.color ?? "neutral";
-
-  const bgColors: Record<string, string> = {
-    neutral: "cx-bg-neutral-900 cx-border-neutral-700",
-    blue: "cx-bg-blue-950/50 cx-border-blue-800",
-    yellow: "cx-bg-yellow-950/50 cx-border-yellow-800",
-    red: "cx-bg-red-950/50 cx-border-red-800",
-    green: "cx-bg-green-950/50 cx-border-green-800",
-  };
 
   return (
-    <div className={`cx-flex cx-gap-3 cx-rounded-lg cx-border cx-p-4 ${bgColors[color] ?? bgColors.neutral}`}>
+    <div
+      className="cx-flex cx-gap-3 cx-rounded-lg cx-border cx-p-4"
+      style={{
+        backgroundColor: "var(--bg-secondary)",
+        borderColor: "var(--border-primary)",
+      }}
+    >
       <span className="cx-text-lg cx-select-none" contentEditable={false}>
         {emoji}
       </span>
@@ -217,10 +242,10 @@ function ToggleBlock({ block, onToggle }: { block: Block; onToggle?: (id: string
       <div className="cx-flex cx-gap-1">
         <button
           type="button"
-          className="cx-mt-[0.25em] cx-h-5 cx-w-5 cx-flex-shrink-0 cx-text-neutral-500 cx-transition-transform hover:cx-text-neutral-300"
+          className="cx-mt-[0.25em] cx-h-5 cx-w-5 cx-flex-shrink-0 cx-transition-transform"
           contentEditable={false}
           onClick={handleClick}
-          style={{ transform: collapsed ? "rotate(0deg)" : "rotate(90deg)" }}
+          style={{ color: "var(--text-muted)", transform: collapsed ? "rotate(0deg)" : "rotate(90deg)" }}
         >
           <svg viewBox="0 0 16 16" fill="currentColor" className="cx-h-full cx-w-full">
             <path d="M6 4l4 4-4 4V4z" />
@@ -231,7 +256,10 @@ function ToggleBlock({ block, onToggle }: { block: Block; onToggle?: (id: string
         </div>
       </div>
       {!collapsed && block.children.length > 0 && (
-        <div className="cx-ml-6 cx-mt-1 cx-border-l cx-border-neutral-800 cx-pl-4">
+        <div
+          className="cx-ml-6 cx-mt-1 cx-border-l cx-pl-4"
+          style={{ borderColor: "var(--border-primary)" }}
+        >
           {/* Children rendered by parent editor */}
         </div>
       )}
@@ -242,7 +270,7 @@ function ToggleBlock({ block, onToggle }: { block: Block; onToggle?: (id: string
 function DividerBlock() {
   return (
     <div className="cx-py-3" contentEditable={false}>
-      <hr className="cx-border-neutral-700" />
+      <hr style={{ borderColor: "var(--border-primary)" }} />
     </div>
   );
 }
@@ -301,7 +329,11 @@ function ImageBlock({ block }: { block: Block }) {
     return (
       <button
         type="button"
-        className="cx-flex cx-h-48 cx-w-full cx-cursor-pointer cx-flex-col cx-items-center cx-justify-center cx-gap-2 cx-rounded-lg cx-border cx-border-dashed cx-border-neutral-700 cx-bg-transparent cx-text-neutral-500 cx-transition-colors hover:cx-border-neutral-500 hover:cx-bg-neutral-900/50"
+        className="cx-flex cx-h-48 cx-w-full cx-cursor-pointer cx-flex-col cx-items-center cx-justify-center cx-gap-2 cx-rounded-lg cx-border cx-border-dashed cx-bg-transparent cx-transition-colors"
+        style={{
+          borderColor: "var(--border-secondary)",
+          color: "var(--text-muted)",
+        }}
         contentEditable={false}
         onClick={handleClick}
         onDragOver={handleDragOver}
@@ -329,7 +361,11 @@ function ImageBlock({ block }: { block: Block }) {
   return (
     <div className="cx-my-2" contentEditable={false}>
       <img src={src} alt={alt} className="cx-max-w-full cx-rounded-lg" />
-      {caption && <p className="cx-mt-1 cx-text-center cx-text-sm cx-text-neutral-500">{caption}</p>}
+      {caption && (
+        <p className="cx-mt-1 cx-text-center cx-text-sm" style={{ color: "var(--text-muted)" }}>
+          {caption}
+        </p>
+      )}
     </div>
   );
 }

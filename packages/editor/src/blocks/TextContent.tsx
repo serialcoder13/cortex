@@ -52,7 +52,13 @@ function SpanRenderer({ span }: { span: TextSpan }) {
         break;
       case "code":
         element = (
-          <code className="cx-rounded cx-bg-neutral-800 cx-px-1 cx-py-0.5 cx-font-mono cx-text-sm cx-text-amber-300">
+          <code
+            className="cx-rounded cx-px-1.5 cx-py-0.5 cx-font-mono cx-text-sm"
+            style={{
+              backgroundColor: "var(--bg-tertiary)",
+              color: "var(--accent)",
+            }}
+          >
             {element}
           </code>
         );
@@ -61,7 +67,8 @@ function SpanRenderer({ span }: { span: TextSpan }) {
         element = (
           <a
             href={mark.attrs?.href}
-            className="cx-text-blue-400 cx-underline"
+            className="cx-underline"
+            style={{ color: "var(--accent)" }}
             target="_blank"
             rel="noopener noreferrer"
           >

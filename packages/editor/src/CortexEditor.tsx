@@ -125,7 +125,7 @@ function getCaretRect(): DOMRect | null {
   return rect;
 }
 
-// ---- Drag Handle SVG ----
+// ---- Drag Handle & Add Button SVGs ----
 
 function DragHandleIcon() {
   return (
@@ -140,6 +140,15 @@ function DragHandleIcon() {
   );
 }
 
+function AddBlockIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <line x1="8" y1="3" x2="8" y2="13" />
+      <line x1="3" y1="8" x2="13" y2="8" />
+    </svg>
+  );
+}
+
 // ---- Component ----
 
 export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
@@ -150,7 +159,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       onIdle,
       onBlur,
       idleDebounceMs = 60_000,
-      placeholder = "Type '/' for commands...",
+      placeholder = "Press '/' for commands, or just start typing...",
       readOnly = false,
       className,
     },
@@ -700,6 +709,24 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       [doc, onChange],
     );
 
+    // ---- Add block via + button ----
+    const onAddBlock = useCallback(
+      (afterBlockId: string) => {
+        const block = createBlock("paragraph");
+        const newDoc = insertBlockAfter(doc, afterBlockId, block);
+        setDoc(newDoc);
+        docRef.current = newDoc;
+        setSelection({
+          anchor: { blockId: block.id, offset: 0 },
+          focus: { blockId: block.id, offset: 0 },
+        });
+        onChange?.(newDoc);
+        // Focus editor after React re-renders
+        requestAnimationFrame(() => rootRef.current?.focus());
+      },
+      [doc, onChange],
+    );
+
     // ---- Click on editor background → focus last block ----
     const onRootClick = useCallback(
       (e: React.MouseEvent) => {
@@ -778,7 +805,8 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         >
           {isEmpty && !readOnly && (
             <div
-              className="cx-pointer-events-none cx-absolute cx-left-0 cx-top-0 cx-select-none cx-text-neutral-600"
+              className="cx-pointer-events-none cx-absolute cx-left-0 cx-top-0 cx-select-none cx-text-base"
+              style={{ color: "var(--text-muted)" }}
               aria-hidden="true"
             >
               {placeholder}
@@ -788,7 +816,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
             <div
               key={block.id}
               data-block-id={block.id}
-              className={`cx-block-wrapper cx-group cx-relative cx-py-0.5 ${
+              className={`cx-block-wrapper cx-group cx-relative cx-py-1 ${
                 dragState.draggingBlockId === block.id ? "cx-opacity-50" : ""
               }`}
               onDragOver={(e) => handleDragOver(e, blockIndex)}
@@ -798,25 +826,56 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
               {/* Drop indicator line */}
               {dragState.dropTargetIndex === blockIndex && dragState.draggingBlockId !== block.id && (
                 <div
-                  className="cx-pointer-events-none cx-absolute cx-left-0 cx-right-0 cx-top-0 cx-h-0.5 cx-bg-blue-500"
+                  className="cx-pointer-events-none cx-absolute cx-left-0 cx-right-0 cx-top-0 cx-h-0.5"
+                  style={{ backgroundColor: "var(--accent)" }}
                   aria-hidden="true"
                 />
               )}
 
-              {/* Drag handle */}
+              {/* Add button + Drag handle */}
               {!readOnly && (
                 <div
+                  className="cx-absolute cx--left-14 cx-top-0.5 cx-flex cx-items-center cx-gap-0.5 cx-opacity-0 cx-transition-opacity group-hover:cx-opacity-100"
                   contentEditable={false}
                   suppressContentEditableWarning
-                  draggable
-                  role="button"
-                  tabIndex={-1}
-                  onDragStart={(e) => handleDragStart(e, block.id)}
-                  onDragEnd={handleDragEnd}
-                  className="cx-absolute cx--left-8 cx-top-1 cx-flex cx-h-6 cx-w-6 cx-cursor-grab cx-items-center cx-justify-center cx-rounded cx-opacity-0 cx-transition-opacity cx-text-neutral-600 hover:cx-bg-neutral-800 hover:cx-text-neutral-400 group-hover:cx-opacity-100 active:cx-cursor-grabbing"
-                  aria-label="Drag to reorder"
                 >
-                  <DragHandleIcon />
+                  <button
+                    type="button"
+                    className="cx-flex cx-h-6 cx-w-6 cx-items-center cx-justify-center cx-rounded cx-transition-colors"
+                    style={{ color: "var(--text-muted)" }}
+                    onClick={() => onAddBlock(block.id)}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = "var(--bg-hover)";
+                      e.currentTarget.style.color = "var(--text-secondary)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                      e.currentTarget.style.color = "var(--text-muted)";
+                    }}
+                    aria-label="Add block below"
+                  >
+                    <AddBlockIcon />
+                  </button>
+                  <div
+                    draggable
+                    role="button"
+                    tabIndex={-1}
+                    onDragStart={(e) => handleDragStart(e, block.id)}
+                    onDragEnd={handleDragEnd}
+                    className="cx-flex cx-h-6 cx-w-6 cx-cursor-grab cx-items-center cx-justify-center cx-rounded cx-transition-colors active:cx-cursor-grabbing"
+                    style={{ color: "var(--text-muted)" }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = "var(--bg-hover)";
+                      e.currentTarget.style.color = "var(--text-secondary)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                      e.currentTarget.style.color = "var(--text-muted)";
+                    }}
+                    aria-label="Drag to reorder"
+                  >
+                    <DragHandleIcon />
+                  </div>
                 </div>
               )}
 
@@ -834,7 +893,8 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           {/* Drop indicator at the end */}
           {dragState.dropTargetIndex === doc.blocks.length && dragState.draggingBlockId !== null && (
             <div
-              className="cx-pointer-events-none cx-h-0.5 cx-bg-blue-500"
+              className="cx-pointer-events-none cx-h-0.5"
+              style={{ backgroundColor: "var(--accent)" }}
               aria-hidden="true"
             />
           )}

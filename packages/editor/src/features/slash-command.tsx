@@ -1,10 +1,10 @@
 // ============================================================
 // Slash Command Menu — appears when user types "/" in an
 // empty or beginning-of-block position. Shows a filterable
-// list of block types to insert.
+// list of block types to insert, grouped by category.
 // ============================================================
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { BlockType } from "../core/types";
 import { blockDefinitions, type BlockDefinition } from "../blocks/registry";
 
@@ -18,6 +18,14 @@ interface SlashCommandProps {
   /** Called when the menu should close */
   onClose: () => void;
 }
+
+// Group definitions by category for display
+const CATEGORIES: { label: string; types: BlockType[] }[] = [
+  { label: "Basic", types: ["paragraph", "heading1", "heading2", "heading3"] },
+  { label: "Lists", types: ["bulletList", "numberedList", "todo"] },
+  { label: "Advanced", types: ["codeBlock", "quote", "callout", "toggle"] },
+  { label: "Media", types: ["divider", "image", "embed", "table"] },
+];
 
 export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashCommandProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -35,6 +43,23 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
     );
   }, [filter]);
 
+  // Group filtered items by category
+  const grouped = useMemo(() => {
+    if (filter) {
+      // When filtering, show flat list
+      return [{ label: "Results", items: filtered }];
+    }
+    return CATEGORIES.map((cat) => ({
+      label: cat.label,
+      items: cat.types
+        .map((t) => filtered.find((d) => d.type === t))
+        .filter(Boolean) as BlockDefinition[],
+    })).filter((g) => g.items.length > 0);
+  }, [filtered, filter]);
+
+  // Flat list for keyboard nav
+  const flatItems = useMemo(() => grouped.flatMap((g) => g.items), [grouped]);
+
   // Reset selection when filter changes
   useEffect(() => {
     setSelectedIndex(0);
@@ -46,15 +71,15 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
-          setSelectedIndex((i) => (i + 1) % filtered.length);
+          setSelectedIndex((i) => (i + 1) % flatItems.length);
           break;
         case "ArrowUp":
           e.preventDefault();
-          setSelectedIndex((i) => (i - 1 + filtered.length) % filtered.length);
+          setSelectedIndex((i) => (i - 1 + flatItems.length) % flatItems.length);
           break;
         case "Enter": {
           e.preventDefault();
-          const item = filtered[selectedIndex];
+          const item = flatItems[selectedIndex];
           if (item) onSelect(item.type);
           break;
         }
@@ -67,7 +92,7 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
 
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [filtered, selectedIndex, onSelect, onClose]);
+  }, [flatItems, selectedIndex, onSelect, onClose]);
 
   // Close on outside click
   useEffect(() => {
@@ -86,50 +111,105 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
     selected?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
-  if (filtered.length === 0) {
+  // Compute position, flipping upward if near bottom of viewport
+  const menuStyle = useMemo(() => {
+    const maxHeight = 340;
+    const flipUp = position.y + maxHeight > window.innerHeight - 20;
+    return {
+      left: position.x,
+      top: flipUp ? undefined : position.y,
+      bottom: flipUp ? window.innerHeight - position.y + 8 : undefined,
+    };
+  }, [position]);
+
+  if (flatItems.length === 0) {
     return (
       <div
         ref={menuRef}
-        className="cx-fixed cx-z-50 cx-w-72 cx-rounded-lg cx-border cx-border-neutral-700 cx-bg-neutral-900 cx-p-2 cx-shadow-xl"
-        style={{ left: position.x, top: position.y }}
+        className="cx-fixed cx-z-50 cx-w-72 cx-rounded-lg cx-p-2 cx-menu-enter"
+        style={{
+          ...menuStyle,
+          backgroundColor: "var(--bg-secondary)",
+          border: "1px solid var(--border-primary)",
+          boxShadow: "0 4px 16px var(--shadow)",
+        }}
       >
-        <p className="cx-px-2 cx-py-3 cx-text-center cx-text-sm cx-text-neutral-500">
+        <p
+          className="cx-px-2 cx-py-3 cx-text-center cx-text-sm"
+          style={{ color: "var(--text-muted)" }}
+        >
           No matching blocks
         </p>
       </div>
     );
   }
 
+  let flatIndex = 0;
+
   return (
     <div
       ref={menuRef}
-      className="cx-fixed cx-z-50 cx-max-h-80 cx-w-72 cx-overflow-y-auto cx-rounded-lg cx-border cx-border-neutral-700 cx-bg-neutral-900 cx-py-1 cx-shadow-xl"
-      style={{ left: position.x, top: position.y }}
+      className="cx-fixed cx-z-50 cx-max-h-[340px] cx-w-72 cx-overflow-y-auto cx-rounded-lg cx-py-1 cx-menu-enter"
+      style={{
+        ...menuStyle,
+        backgroundColor: "var(--bg-secondary)",
+        border: "1px solid var(--border-primary)",
+        boxShadow: "0 4px 16px var(--shadow)",
+      }}
     >
-      <div className="cx-px-3 cx-py-1.5 cx-text-xs cx-font-medium cx-uppercase cx-tracking-wider cx-text-neutral-500">
-        Blocks
-      </div>
-      {filtered.map((def, i) => (
-        <button
-          key={def.type}
-          type="button"
-          data-selected={i === selectedIndex}
-          className={`cx-flex cx-w-full cx-items-center cx-gap-3 cx-px-3 cx-py-2 cx-text-left cx-transition-colors ${
-            i === selectedIndex
-              ? "cx-bg-neutral-800 cx-text-white"
-              : "cx-text-neutral-300 hover:cx-bg-neutral-800/50"
-          }`}
-          onClick={() => onSelect(def.type)}
-          onMouseEnter={() => setSelectedIndex(i)}
-        >
-          <span className="cx-flex cx-h-8 cx-w-8 cx-items-center cx-justify-center cx-rounded cx-bg-neutral-800 cx-text-sm">
-            {getBlockIcon(def.type)}
-          </span>
-          <div>
-            <div className="cx-text-sm cx-font-medium">{def.label}</div>
-            <div className="cx-text-xs cx-text-neutral-500">{def.description}</div>
+      {grouped.map((group) => (
+        <div key={group.label}>
+          <div
+            className="cx-px-3 cx-py-1.5 cx-text-[11px] cx-font-medium cx-uppercase cx-tracking-wider"
+            style={{ color: "var(--text-muted)" }}
+          >
+            {group.label}
           </div>
-        </button>
+          {group.items.map((def) => {
+            const idx = flatIndex++;
+            const isSelected = idx === selectedIndex;
+            return (
+              <button
+                key={def.type}
+                type="button"
+                data-selected={isSelected}
+                className="cx-flex cx-w-full cx-items-center cx-gap-3 cx-px-3 cx-py-2 cx-text-left cx-transition-colors cx-rounded-md cx-mx-0"
+                style={{
+                  backgroundColor: isSelected ? "var(--bg-tertiary)" : "transparent",
+                  color: isSelected ? "var(--text-primary)" : "var(--text-secondary)",
+                }}
+                onClick={() => onSelect(def.type)}
+                onMouseEnter={() => setSelectedIndex(idx)}
+              >
+                <span
+                  className="cx-flex cx-h-9 cx-w-9 cx-items-center cx-justify-center cx-rounded-md cx-text-sm cx-flex-shrink-0"
+                  style={{
+                    backgroundColor: "var(--bg-tertiary)",
+                    color: "var(--text-primary)",
+                  }}
+                >
+                  {getBlockIcon(def.type)}
+                </span>
+                <div className="cx-flex-1 cx-min-w-0">
+                  <div className="cx-text-sm cx-font-medium" style={{ color: "var(--text-primary)" }}>
+                    {def.label}
+                  </div>
+                  <div className="cx-text-xs" style={{ color: "var(--text-muted)" }}>
+                    {def.description}
+                  </div>
+                </div>
+                {def.shortcut && (
+                  <span
+                    className="cx-text-[11px] cx-font-mono cx-flex-shrink-0"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    {def.shortcut}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       ))}
     </div>
   );
