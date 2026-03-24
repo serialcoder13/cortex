@@ -13,10 +13,14 @@ export interface UseVaultReturn {
   loading: boolean;
   /** Human-readable error message from the last failed operation. */
   error: string | null;
-  /** Create a brand-new vault, returning the recovery key. */
+  /** Create a brand-new vault, returning the recovery key. Does NOT unlock — call completeCreation after. */
   createVault: (path: string, password: string) => Promise<string | null>;
+  /** Mark the vault as unlocked after the user has acknowledged the recovery key. */
+  completeCreation: () => void;
   /** Open an existing vault with a password. */
   openVault: (path: string, password: string) => Promise<boolean>;
+  /** Open an existing vault with a recovery key. */
+  openVaultWithRecovery: (path: string, recoveryKey: string) => Promise<boolean>;
   /** Lock the currently-open vault. */
   lockVault: () => Promise<void>;
 }
@@ -69,7 +73,8 @@ export function useVault(): UseVaultReturn {
       setLoading(true);
       try {
         const { recovery_key } = await storage.createVault(path, password);
-        setIsUnlocked(true);
+        // Don't set isUnlocked yet — the caller must show the recovery key
+        // first and then call openVault (or completeCreation) to unlock.
         setVaultPath(path);
         persistVaultPath(path);
         return recovery_key;
@@ -84,6 +89,11 @@ export function useVault(): UseVaultReturn {
     },
     [persistVaultPath],
   );
+
+  /** Mark vault as unlocked after the recovery key has been acknowledged. */
+  const completeCreation = useCallback(() => {
+    setIsUnlocked(true);
+  }, []);
 
   const openVault = useCallback(
     async (path: string, password: string): Promise<boolean> => {
@@ -111,6 +121,33 @@ export function useVault(): UseVaultReturn {
     [persistVaultPath],
   );
 
+  const openVaultWithRecovery = useCallback(
+    async (path: string, recoveryKey: string): Promise<boolean> => {
+      setError(null);
+      setLoading(true);
+      try {
+        const ok = await storage.openVaultWithRecovery(path, recoveryKey);
+        if (ok) {
+          // Do NOT set isUnlocked — the caller must show the password reset
+          // screen first, then call completeCreation to unlock.
+          setVaultPath(path);
+          persistVaultPath(path);
+        } else {
+          setError("Invalid recovery key or corrupted vault");
+        }
+        return ok;
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to open vault with recovery key";
+        setError(message);
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [persistVaultPath],
+  );
+
   const lockVault = useCallback(async () => {
     setError(null);
     try {
@@ -125,5 +162,5 @@ export function useVault(): UseVaultReturn {
     }
   }, []);
 
-  return { isUnlocked, vaultPath, lastVaultPath, loading, error, createVault, openVault, lockVault };
+  return { isUnlocked, vaultPath, lastVaultPath, loading, error, createVault, completeCreation, openVault, openVaultWithRecovery, lockVault };
 }

@@ -6,6 +6,9 @@ import { useTheme } from "../lib/hooks/useTheme";
 interface VaultSetupProps {
   onCreateVault: (path: string, password: string) => Promise<void>;
   onOpenVault: (path: string, password: string) => Promise<void>;
+  onOpenWithRecovery: (path: string, recoveryKey: string) => Promise<boolean>;
+  onResetPassword: (recoveryKey: string, newPassword: string) => Promise<string>;
+  onCompleteRecovery: () => void;
   error: string | null;
   recoveryKey?: string | null;
   lastVaultPath?: string | null;
@@ -135,15 +138,23 @@ function CortexLogo() {
   );
 }
 
-export function VaultSetup({ onCreateVault, onOpenVault, error, recoveryKey, lastVaultPath }: Readonly<VaultSetupProps>) {
+export function VaultSetup({ onCreateVault, onOpenVault, onOpenWithRecovery, onResetPassword, onCompleteRecovery, error, recoveryKey, lastVaultPath }: Readonly<VaultSetupProps>) {
   // Apply theme on vault setup screen
   useTheme();
 
   const [mode, setMode] = useState<"open" | "create">("open");
+  const [useRecovery, setUseRecovery] = useState(false);
   const [path, setPath] = useState(lastVaultPath ?? "");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [recoveryInput, setRecoveryInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // After successful recovery, prompt to set a new password.
+  const [recoverySuccess, setRecoverySuccess] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [newRecoveryKey, setNewRecoveryKey] = useState<string | null>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   // Auto-focus password field when last vault path is pre-filled
@@ -156,13 +167,29 @@ export function VaultSetup({ onCreateVault, onOpenVault, error, recoveryKey, las
   function getSubmitLabel() {
     if (loading) return "...";
     if (mode === "create") return "Create Vault";
+    if (useRecovery) return "Recover Vault";
     return "Unlock";
   }
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!path || !password) return;
+    if (!path) return;
 
+    if (useRecovery) {
+      if (!recoveryInput.trim()) return;
+      setLoading(true);
+      try {
+        const ok = await onOpenWithRecovery(path, recoveryInput.trim());
+        if (ok) {
+          setRecoverySuccess(true);
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (!password) return;
     if (mode === "create" && password !== confirmPassword) {
       return;
     }
@@ -174,6 +201,29 @@ export function VaultSetup({ onCreateVault, onOpenVault, error, recoveryKey, las
       } else {
         await onOpenVault(path, password);
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSetNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 8) {
+      setResetError("Password must be at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setResetError("Passwords do not match.");
+      return;
+    }
+    setResetError(null);
+    setLoading(true);
+    try {
+      const key = await onResetPassword(recoveryInput.trim(), newPassword);
+      setNewRecoveryKey(key);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to reset password";
+      setResetError(msg);
     } finally {
       setLoading(false);
     }
@@ -229,92 +279,185 @@ export function VaultSetup({ onCreateVault, onOpenVault, error, recoveryKey, las
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="vault-path" className="mb-1 block text-sm" style={{ color: "var(--text-secondary)" }}>Vault Location</label>
-              <div className="flex gap-2">
-                <input
-                  id="vault-path"
-                  type="text"
-                  value={path}
-                  onChange={(e) => setPath(e.target.value)}
-                  placeholder="/Users/you/cortex-vault"
-                  className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  style={{
-                    backgroundColor: "var(--bg-tertiary)",
-                    color: "var(--text-primary)",
-                    border: "1px solid var(--border-secondary)",
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={handleBrowse}
-                  className="flex-shrink-0 rounded-lg px-3 py-2 text-sm transition-colors hover:opacity-80"
-                  style={{
-                    backgroundColor: "var(--bg-tertiary)",
-                    color: "var(--text-secondary)",
-                    border: "1px solid var(--border-secondary)",
-                  }}
-                >
-                  Browse
-                </button>
-              </div>
+          {newRecoveryKey ? (
+            /* After password reset, show the new recovery key */
+            <div className="space-y-4">
+              <p className="text-sm font-medium" style={{ color: "var(--success)" }}>
+                Password reset successfully!
+              </p>
+              <RecoveryKeyDisplay recoveryKey={newRecoveryKey} />
+              <p className="text-xs" style={{ color: "var(--danger)" }}>
+                Your old recovery key is no longer valid. Save this new key — it will only be shown once.
+              </p>
+              <button
+                type="button"
+                onClick={onCompleteRecovery}
+                className="w-full rounded-lg px-4 py-2.5 text-sm font-medium text-white transition-colors hover:opacity-90"
+                style={{ backgroundColor: "var(--accent)" }}
+              >
+                I have saved my recovery key
+              </button>
             </div>
-
-            <div>
-              <label htmlFor="vault-password" className="mb-1 block text-sm" style={{ color: "var(--text-secondary)" }}>Password</label>
-              <input
-                ref={passwordRef}
-                id="vault-password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter vault password"
-                className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
-                style={{
-                  backgroundColor: "var(--bg-tertiary)",
-                  color: "var(--text-primary)",
-                  border: "1px solid var(--border-secondary)",
-                }}
-              />
-              {mode === "create" && <PasswordStrengthBar password={password} />}
-            </div>
-
-            {mode === "create" && (
+          ) : recoverySuccess ? (
+            /* After successful recovery, prompt for a new password */
+            <form onSubmit={handleSetNewPassword} className="space-y-4">
+              <p className="text-sm" style={{ color: "var(--success)" }}>
+                Vault recovered successfully! Set a new password.
+              </p>
               <div>
-                <label htmlFor="vault-confirm-password" className="mb-1 block text-sm" style={{ color: "var(--text-secondary)" }}>Confirm Password</label>
+                <label htmlFor="new-pw" className="mb-1 block text-sm" style={{ color: "var(--text-secondary)" }}>New Password</label>
                 <input
-                  id="vault-confirm-password"
+                  id="new-pw"
                   type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                  className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }}
+                  autoFocus
+                />
+                <PasswordStrengthBar password={newPassword} />
+              </div>
+              <div>
+                <label htmlFor="confirm-new-pw" className="mb-1 block text-sm" style={{ color: "var(--text-secondary)" }}>Confirm New Password</label>
+                <input
+                  id="confirm-new-pw"
+                  type="password"
+                  value={confirmNewPassword}
+                  onChange={(e) => setConfirmNewPassword(e.target.value)}
                   placeholder="Confirm password"
                   className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  style={{
-                    backgroundColor: "var(--bg-tertiary)",
-                    color: "var(--text-primary)",
-                    border: "1px solid var(--border-secondary)",
-                  }}
+                  style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }}
                 />
-                {password && confirmPassword && password !== confirmPassword && (
+                {newPassword && confirmNewPassword && newPassword !== confirmNewPassword && (
                   <p className="mt-1 text-xs" style={{ color: "var(--danger)" }}>Passwords do not match</p>
                 )}
               </div>
-            )}
+              {resetError && <p className="text-sm" style={{ color: "var(--danger)" }}>{resetError}</p>}
+              <button
+                type="submit"
+                disabled={loading || !newPassword || newPassword !== confirmNewPassword}
+                className="w-full rounded-lg px-4 py-2.5 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: "var(--accent)" }}
+              >
+                {loading ? "..." : "Set Password & Continue"}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label htmlFor="vault-path" className="mb-1 block text-sm" style={{ color: "var(--text-secondary)" }}>Vault Location</label>
+                <div className="flex gap-2">
+                  <input
+                    id="vault-path"
+                    type="text"
+                    value={path}
+                    onChange={(e) => setPath(e.target.value)}
+                    placeholder="/Users/you/cortex-vault"
+                    className="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleBrowse}
+                    className="flex-shrink-0 rounded-lg px-3 py-2 text-sm transition-colors hover:opacity-80"
+                    style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)" }}
+                  >
+                    Browse
+                  </button>
+                </div>
+              </div>
 
-            {recoveryKey && <RecoveryKeyDisplay recoveryKey={recoveryKey} />}
+              {mode === "open" && !useRecovery && (
+                <div>
+                  <label htmlFor="vault-password" className="mb-1 block text-sm" style={{ color: "var(--text-secondary)" }}>Password</label>
+                  <input
+                    ref={passwordRef}
+                    id="vault-password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter vault password"
+                    className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }}
+                  />
+                </div>
+              )}
 
-            {error && <p className="text-sm" style={{ color: "var(--danger)" }}>{error}</p>}
+              {mode === "open" && useRecovery && (
+                <div>
+                  <label htmlFor="vault-recovery" className="mb-1 block text-sm" style={{ color: "var(--text-secondary)" }}>Recovery Key</label>
+                  <textarea
+                    id="vault-recovery"
+                    value={recoveryInput}
+                    onChange={(e) => setRecoveryInput(e.target.value)}
+                    placeholder="Paste your recovery key"
+                    rows={3}
+                    className="w-full rounded-lg px-3 py-2 text-sm font-mono focus:outline-none resize-none"
+                    style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }}
+                  />
+                </div>
+              )}
 
-            <button
-              type="submit"
-              disabled={loading || !path || !password || (mode === "create" && password !== confirmPassword)}
-              className="w-full rounded-lg px-4 py-2.5 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ backgroundColor: "var(--accent)" }}
-            >
-              {getSubmitLabel()}
-            </button>
-          </form>
+              {mode === "open" && (
+                <button
+                  type="button"
+                  onClick={() => { setUseRecovery(!useRecovery); setPassword(""); setRecoveryInput(""); }}
+                  className="text-xs transition-colors hover:opacity-80"
+                  style={{ color: "var(--accent)" }}
+                >
+                  {useRecovery ? "Use password instead" : "Forgot password? Use recovery key"}
+                </button>
+              )}
+
+              {mode === "create" && (
+                <>
+                  <div>
+                    <label htmlFor="vault-password" className="mb-1 block text-sm" style={{ color: "var(--text-secondary)" }}>Password</label>
+                    <input
+                      ref={passwordRef}
+                      id="vault-password"
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter vault password"
+                      className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                      style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }}
+                    />
+                    <PasswordStrengthBar password={password} />
+                  </div>
+                  <div>
+                    <label htmlFor="vault-confirm-password" className="mb-1 block text-sm" style={{ color: "var(--text-secondary)" }}>Confirm Password</label>
+                    <input
+                      id="vault-confirm-password"
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Confirm password"
+                      className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
+                      style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }}
+                    />
+                    {password && confirmPassword && password !== confirmPassword && (
+                      <p className="mt-1 text-xs" style={{ color: "var(--danger)" }}>Passwords do not match</p>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {recoveryKey && <RecoveryKeyDisplay recoveryKey={recoveryKey} />}
+
+              {error && <p className="text-sm" style={{ color: "var(--danger)" }}>{error}</p>}
+
+              <button
+                type="submit"
+                disabled={loading || !path || (mode === "open" && !useRecovery && !password) || (mode === "open" && useRecovery && !recoveryInput.trim()) || (mode === "create" && (!password || password !== confirmPassword))}
+                className="w-full rounded-lg px-4 py-2.5 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: "var(--accent)" }}
+              >
+                {getSubmitLabel()}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>

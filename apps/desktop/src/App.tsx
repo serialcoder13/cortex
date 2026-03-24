@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { ActivityBar, type ActivityView } from "./components/ActivityBar";
 import { FileTree } from "./components/FileTree";
 import { TabBar } from "./components/TabBar";
@@ -9,6 +9,7 @@ import { DocumentPage } from "./pages/DocumentPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { useVault } from "./lib/hooks/useVault";
 import { useTheme } from "./lib/hooks/useTheme";
+import { storage } from "./lib/storage";
 import { useTabStore } from "./stores/tabs";
 
 function App() {
@@ -50,8 +51,29 @@ function App() {
     [vault.openVault],
   );
 
-  if (vault.loading) {
+  const handleOpenWithRecovery = useCallback(
+    async (path: string, recoveryKey: string) => {
+      return vault.openVaultWithRecovery(path, recoveryKey);
+    },
+    [vault.openVaultWithRecovery],
+  );
+
+  const handleResetPassword = useCallback(
+    async (recoveryKeyStr: string, newPassword: string): Promise<string> => {
+      const result = await storage.resetPasswordWithRecovery(recoveryKeyStr, newPassword);
+      return result.recovery_key;
+    },
+    [],
+  );
+
+  // Only show the loading skeleton on the initial unlock check, not during
+  // vault operations (which would unmount VaultSetup and lose its state).
+  const initialLoadDone = useRef(false);
+  if (!initialLoadDone.current && vault.loading) {
     return <AppLoadingSkeleton />;
+  }
+  if (!vault.loading) {
+    initialLoadDone.current = true;
   }
 
   if (!vault.isUnlocked) {
@@ -60,6 +82,9 @@ function App() {
         <VaultSetup
           onCreateVault={handleCreateVault}
           onOpenVault={handleOpenVault}
+          onOpenWithRecovery={handleOpenWithRecovery}
+          onResetPassword={handleResetPassword}
+          onCompleteRecovery={vault.completeCreation}
           error={vault.error}
           lastVaultPath={vault.lastVaultPath}
         />
@@ -91,7 +116,7 @@ function App() {
                 type="button"
                 className="w-full rounded-lg px-4 py-2.5 text-sm font-medium text-white"
                 style={{ backgroundColor: "var(--accent)" }}
-                onClick={() => setRecoveryKey(null)}
+                onClick={() => { setRecoveryKey(null); vault.completeCreation(); }}
               >
                 I have saved my recovery key
               </button>

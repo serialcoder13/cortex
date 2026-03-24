@@ -41,9 +41,16 @@ pub struct CreateVaultResult {
 pub fn vault_create(
     path: String,
     password: String,
+    state: State<'_, VaultState>,
 ) -> CmdResult<CreateVaultResult> {
     let recovery_key = vault::create_vault(&path, &password)
         .map_err(CommandError::from)?;
+
+    // Immediately open the vault so the master key is available once the
+    // frontend acknowledges the recovery key and transitions to the main view.
+    vault::open_vault(&path, &password, &state)
+        .map_err(CommandError::from)?;
+
     Ok(CreateVaultResult { recovery_key })
 }
 
@@ -72,6 +79,36 @@ pub fn vault_lock(state: State<'_, VaultState>) -> CmdResult<bool> {
 #[tauri::command]
 pub fn vault_is_unlocked(state: State<'_, VaultState>) -> bool {
     state.is_unlocked()
+}
+
+#[tauri::command]
+pub fn vault_open_with_recovery(
+    path: String,
+    recovery_key: String,
+    state: State<'_, VaultState>,
+) -> CmdResult<bool> {
+    vault::open_vault_with_recovery(&path, &recovery_key, &state)
+        .map_err(CommandError::from)?;
+    Ok(true)
+}
+
+#[derive(Serialize)]
+pub struct ResetPasswordResult {
+    recovery_key: String,
+}
+
+#[tauri::command]
+pub fn vault_reset_password_with_recovery(
+    recovery_key: String,
+    new_password: String,
+    state: State<'_, VaultState>,
+) -> CmdResult<ResetPasswordResult> {
+    let vault_path = state.vault_path.lock().unwrap().clone()
+        .ok_or_else(|| CommandError { message: "Vault not open".into() })?;
+
+    let new_recovery_key = vault::reset_password_with_recovery(&vault_path, &recovery_key, &new_password)
+        .map_err(CommandError::from)?;
+    Ok(ResetPasswordResult { recovery_key: new_recovery_key })
 }
 
 #[tauri::command]

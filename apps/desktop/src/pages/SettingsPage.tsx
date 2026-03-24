@@ -1,8 +1,42 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useSettingsStore } from "@cortex/store";
 import type { LlmProvider, ThemeName, ThemeMode } from "@cortex/store";
 import { useTheme } from "../lib/hooks/useTheme";
 import { storage } from "../lib/storage";
+
+type PasswordStrength = "weak" | "fair" | "good" | "strong";
+
+function getPasswordStrength(password: string): PasswordStrength {
+  if (!password || password.length < 8) return "weak";
+  const hasUpper = /[A-Z]/.test(password);
+  const hasLower = /[a-z]/.test(password);
+  const hasNumber = /\d/.test(password);
+  const hasSpecial = /[^A-Za-z0-9]/.test(password);
+  if (password.length >= 16 || (hasUpper && hasLower && hasNumber && hasSpecial)) return "strong";
+  if (password.length >= 12) return "good";
+  return "fair";
+}
+
+const STRENGTH_CONFIG: Record<PasswordStrength, { color: string; bg: string; width: string; label: string }> = {
+  weak: { color: "text-red-400", bg: "bg-red-500", width: "w-1/4", label: "Weak" },
+  fair: { color: "text-orange-400", bg: "bg-orange-500", width: "w-2/4", label: "Fair" },
+  good: { color: "text-blue-400", bg: "bg-blue-500", width: "w-3/4", label: "Good" },
+  strong: { color: "text-green-400", bg: "bg-green-500", width: "w-full", label: "Strong" },
+};
+
+function PasswordStrengthMeter({ password }: Readonly<{ password: string }>) {
+  const strength = useMemo(() => getPasswordStrength(password), [password]);
+  const config = STRENGTH_CONFIG[strength];
+  if (!password) return null;
+  return (
+    <div className="mt-2">
+      <div className="h-1 w-full overflow-hidden rounded-full" style={{ backgroundColor: "var(--bg-tertiary)" }}>
+        <div className={`h-full rounded-full transition-all duration-300 ${config.bg} ${config.width}`} />
+      </div>
+      <p className={`mt-1 text-xs ${config.color}`}>{config.label}</p>
+    </div>
+  );
+}
 
 const LLM_PROVIDERS: Array<{ value: LlmProvider; label: string }> = [
   { value: "deepseek", label: "DeepSeek" },
@@ -438,6 +472,7 @@ export function SettingsPage({ onClose }: Readonly<{ onClose?: () => void }>) {
                 style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}
                 placeholder="At least 8 characters"
               />
+              <PasswordStrengthMeter password={newPassword} />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Confirm New Password</label>

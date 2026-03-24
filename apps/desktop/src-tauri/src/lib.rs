@@ -23,6 +23,8 @@ pub fn run() {
             commands::storage::storage_list,
             commands::storage::storage_search,
             commands::storage::storage_create_daily_note,
+            commands::storage::vault_open_with_recovery,
+            commands::storage::vault_reset_password_with_recovery,
             commands::storage::vault_change_password,
         ])
         .run(tauri::generate_context!())

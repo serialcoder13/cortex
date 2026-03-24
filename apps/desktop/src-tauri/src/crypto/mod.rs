@@ -185,6 +185,52 @@ pub fn unlock_vault_with_recovery(
     aes_decrypt(&recovery_key, &nonce_bytes, &encrypted)
 }
 
+/// Reset the vault password using the recovery key.
+///
+/// Decrypts the master key with the recovery key, generates a new salt,
+/// derives a new key from the new password, re-encrypts the master key,
+/// generates a new recovery key, and returns updated [`VaultKeys`] plus
+/// the new base64-encoded recovery key.
+pub fn reset_password_with_recovery(
+    recovery_key_b64: &str,
+    new_password: &str,
+    keys: &VaultKeys,
+) -> Result<(VaultKeys, String), CryptoError> {
+    // 1. Unlock master key with recovery key.
+    let master_key = unlock_vault_with_recovery(recovery_key_b64, keys)?;
+
+    // 2. Generate new salt and derive new password key.
+    let new_salt = random_bytes(SALT_SIZE);
+    let new_password_key = derive_key(new_password, &new_salt)?;
+
+    // 3. Re-encrypt master key with new password-derived key.
+    let new_nonce: [u8; NONCE_SIZE] = random_bytes(NONCE_SIZE)
+        .try_into()
+        .expect("nonce is exactly 12 bytes");
+    let new_encrypted_master = aes_encrypt(&new_password_key, &new_nonce, &master_key)?;
+
+    // 4. Generate a new recovery key and re-encrypt master key with it.
+    let new_recovery_key = random_bytes(KEY_SIZE);
+    let new_recovery_key_arr: [u8; KEY_SIZE] = new_recovery_key
+        .clone()
+        .try_into()
+        .expect("recovery key is exactly 32 bytes");
+    let recovery_nonce: [u8; NONCE_SIZE] = random_bytes(NONCE_SIZE)
+        .try_into()
+        .expect("nonce is exactly 12 bytes");
+    let new_encrypted_master_recovery = aes_encrypt(&new_recovery_key_arr, &recovery_nonce, &master_key)?;
+
+    let new_keys = VaultKeys {
+        salt: BASE64.encode(&new_salt),
+        encrypted_master_key: BASE64.encode(&new_encrypted_master),
+        master_key_nonce: BASE64.encode(new_nonce),
+        encrypted_master_key_recovery: BASE64.encode(&new_encrypted_master_recovery),
+        recovery_key_nonce: BASE64.encode(recovery_nonce),
+    };
+
+    Ok((new_keys, BASE64.encode(&new_recovery_key)))
+}
+
 /// Encrypt a file's contents using the 32-byte master key.
 ///
 /// Generates a random 12-byte nonce and returns `nonce || ciphertext || tag`

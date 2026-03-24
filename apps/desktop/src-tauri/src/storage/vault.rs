@@ -19,6 +19,18 @@ const KEYS_FILE: &str = "keys.json";
 pub fn create_vault(path: &str, password: &str) -> Result<String, StorageError> {
     let root = Path::new(path);
 
+    // If the directory already exists, ensure it is empty.
+    if root.exists() {
+        let has_content = fs::read_dir(root)?
+            .next()
+            .is_some();
+        if has_content {
+            return Err(StorageError::NotFound(
+                "Folder is not empty. Please choose an empty folder or a new path.".into(),
+            ));
+        }
+    }
+
     // Create the directory tree.
     let cortex_dir = root.join(CORTEX_DIR);
     fs::create_dir_all(&cortex_dir)?;
@@ -61,6 +73,23 @@ pub fn open_vault(path: &str, password: &str, state: &VaultState) -> Result<(), 
     Ok(())
 }
 
+/// Open an existing vault using a recovery key instead of a password.
+pub fn open_vault_with_recovery(
+    path: &str,
+    recovery_key: &str,
+    state: &VaultState,
+) -> Result<(), StorageError> {
+    let keys = read_vault_keys(path)?;
+
+    let master_key = crypto::unlock_vault_with_recovery(recovery_key, &keys)
+        .map_err(|e| StorageError::Encryption(e.to_string()))?;
+
+    *state.master_key.lock().unwrap() = Some(master_key);
+    *state.vault_path.lock().unwrap() = Some(path.to_string());
+
+    Ok(())
+}
+
 /// Change the vault password.
 ///
 /// Verifies the old password, re-encrypts the master key with the new password,
@@ -82,6 +111,25 @@ pub fn change_vault_password(
     fs::write(keys_path, keys_json)?;
 
     Ok(())
+}
+
+/// Reset the vault password using a recovery key. Returns the new recovery key.
+pub fn reset_password_with_recovery(
+    path: &str,
+    recovery_key: &str,
+    new_password: &str,
+) -> Result<String, StorageError> {
+    let keys = read_vault_keys(path)?;
+
+    let (new_keys, new_recovery_key) = crypto::reset_password_with_recovery(recovery_key, new_password, &keys)
+        .map_err(|e| StorageError::Encryption(e.to_string()))?;
+
+    let keys_json = serde_json::to_string_pretty(&new_keys)
+        .map_err(|e| StorageError::Serialization(e.to_string()))?;
+    let keys_path = Path::new(path).join(CORTEX_DIR).join(KEYS_FILE);
+    fs::write(keys_path, keys_json)?;
+
+    Ok(new_recovery_key)
 }
 
 /// Check whether a vault exists at the given path by looking for `.cortex/keys.json`.

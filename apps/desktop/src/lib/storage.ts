@@ -84,6 +84,16 @@ export const storage = {
     return invoke("storage_create_daily_note");
   },
 
+  /** Open an existing vault using a recovery key. */
+  async openVaultWithRecovery(path: string, recoveryKey: string): Promise<boolean> {
+    return invoke("vault_open_with_recovery", { path, recoveryKey });
+  },
+
+  /** Reset vault password using a recovery key. Returns the new recovery key. */
+  async resetPasswordWithRecovery(recoveryKey: string, newPassword: string): Promise<{ recovery_key: string }> {
+    return invoke("vault_reset_password_with_recovery", { recoveryKey, newPassword });
+  },
+
   /** Change the vault password. Requires the current (old) password. */
   async changePassword(oldPassword: string, newPassword: string): Promise<boolean> {
     return invoke("vault_change_password", { oldPassword, newPassword });

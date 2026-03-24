@@ -63,6 +63,17 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
     }
   }, [saving]);
 
+  const markSaved = useCallback(() => {
+    setSaveState("saved");
+    // Read activeTabId directly from the store to avoid stale closures.
+    const tabId = useTabStore.getState().activeTabId;
+    if (tabId) setTabDirty(tabId, false);
+    clearTimeout(saveStateTimerRef.current);
+    saveStateTimerRef.current = setTimeout(() => {
+      setSaveState((cur) => (cur === "saved" ? "idle" : cur));
+    }, 2000);
+  }, [setTabDirty]);
+
   // When saving finishes (saving goes false while we were in "saving"), move to "saved".
   const prevSavingRef = useRef(saving);
   useEffect(() => {
@@ -70,16 +81,7 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
       markSaved();
     }
     prevSavingRef.current = saving;
-  }, [saving]);
-
-  const markSaved = useCallback(() => {
-    setSaveState("saved");
-    if (activeTabId) setTabDirty(activeTabId, false);
-    clearTimeout(saveStateTimerRef.current);
-    saveStateTimerRef.current = setTimeout(() => {
-      setSaveState((cur) => (cur === "saved" ? "idle" : cur));
-    }, 2000);
-  }, [activeTabId, setTabDirty]);
+  }, [saving, markSaved]);
 
   useEffect(() => {
     return () => {
@@ -91,9 +93,11 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
   // ---- Title state ----
   const [title, setTitle] = useState("");
 
-  // Derive initial title from content.
+  // Derive initial title from content — only on first load.
+  const titleDerivedRef = useRef(false);
   useEffect(() => {
-    if (!content) return;
+    if (!content || titleDerivedRef.current) return;
+    titleDerivedRef.current = true;
     const { frontmatter, body } = parseFrontmatter(content);
     let derivedTitle = "";
     if (frontmatter.title) {
@@ -142,10 +146,17 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
     }
   }, []);
 
-  // Convert markdown content to editor document.
+  // Convert markdown content to editor document — only on first load, not on
+  // every autosave (which updates `content` and would reset the editor).
+  const initialContentRef = useRef<string | null>(null);
+  if (content && initialContentRef.current === null) {
+    initialContentRef.current = content;
+  }
+
   const initialDoc = useMemo((): EditorDocument | undefined => {
-    if (!content) return undefined;
-    const { body } = parseFrontmatter(content);
+    const raw = initialContentRef.current;
+    if (!raw) return undefined;
+    const { body } = parseFrontmatter(raw);
     const blocks = markdownToBlocks(body);
     const doc = blocks.length > 0 ? { blocks, version: 0 } : createDocument();
     // Compute initial counts.
@@ -163,7 +174,8 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
       setCharCount(c);
     });
     return doc;
-  }, [content]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialContentRef.current]);
 
   // ---- Build markdown from doc for saving ----
   const buildMarkdown = useCallback(
@@ -253,6 +265,8 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
             if (activeTabId) {
               updateTabPath(activeTabId, newPath);
             }
+            // Mark as saved since we just wrote the content.
+            markSaved();
             // Notify file tree to refresh.
             globalThis.dispatchEvent(new CustomEvent("cortex:docs-changed"));
           } catch {
@@ -261,7 +275,7 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
         }, 1500);
       }
     },
-    [activeTabId, updateTabTitle, updateTabPath, docPath],
+    [activeTabId, updateTabTitle, updateTabPath, docPath, markSaved],
   );
 
   const handleTitleKeyDown = useCallback(
@@ -273,6 +287,22 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
     },
     [],
   );
+
+  // ---- Cmd+S to force save ----
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        const editorDoc = editorRef.current?.getDocument();
+        if (editorDoc && docPath && content) {
+          const md = buildMarkdown(editorDoc);
+          saveNow(md).then(() => markSaved());
+        }
+      }
+    };
+    globalThis.addEventListener("keydown", handleKeyDown);
+    return () => globalThis.removeEventListener("keydown", handleKeyDown);
+  }, [docPath, content, buildMarkdown, saveNow, markSaved]);
 
   // ---- Breadcrumbs ----
   const breadcrumbs = useMemo(() => {
