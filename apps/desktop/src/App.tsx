@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ActivityBar, type ActivityView } from "./components/ActivityBar";
 import { FileTree } from "./components/FileTree";
 import { TabBar } from "./components/TabBar";
@@ -6,6 +6,7 @@ import { EmptyState } from "./components/EmptyState";
 import { VaultSetup } from "./components/VaultSetup";
 import { AppLoadingSkeleton } from "./components/Skeleton";
 import { DocumentPage } from "./pages/DocumentPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { useVault } from "./lib/hooks/useVault";
 import { useTheme } from "./lib/hooks/useTheme";
 import { useTabStore } from "./stores/tabs";
@@ -18,7 +19,21 @@ function App() {
 
   const tabs = useTabStore((s) => s.tabs);
   const activeTabId = useTabStore((s) => s.activeTabId);
+  const closeTab = useTabStore((s) => s.closeTab);
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+
+  // Cmd+W to close active tab.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "w") {
+        e.preventDefault();
+        const id = useTabStore.getState().activeTabId;
+        if (id) closeTab(id);
+      }
+    };
+    globalThis.addEventListener("keydown", handleKeyDown);
+    return () => globalThis.removeEventListener("keydown", handleKeyDown);
+  }, [closeTab]);
 
   const handleCreateVault = useCallback(
     async (path: string, password: string) => {
@@ -46,6 +61,7 @@ function App() {
           onCreateVault={handleCreateVault}
           onOpenVault={handleOpenVault}
           error={vault.error}
+          lastVaultPath={vault.lastVaultPath}
         />
         {recoveryKey && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
@@ -86,17 +102,19 @@ function App() {
     );
   }
 
-  // Show file tree for calendar and documents views.
-  const showFileTree = activeView === "calendar" || activeView === "documents";
+  // Show sidebar for calendar and documents views.
+  const showSidebar = activeView === "calendar" || activeView === "documents";
 
   return (
     <div className="flex h-screen" style={{ backgroundColor: "var(--bg-primary)", color: "var(--text-primary)" }}>
-      <ActivityBar activeView={activeView} onViewChange={setActiveView} />
-      {showFileTree && <FileTree />}
+      <ActivityBar activeView={activeView} onViewChange={setActiveView} onCloseVault={vault.lockVault} />
+      {showSidebar && <FileTree view={activeView} />}
       <div className="flex-1 flex flex-col min-w-0">
-        <TabBar />
+        {activeView !== "settings" && <TabBar />}
         <div className="flex-1 overflow-hidden">
-          {activeTab?.path ? (
+          {activeView === "settings" ? (
+            <SettingsPage onClose={() => setActiveView("calendar")} />
+          ) : activeTab?.path ? (
             <DocumentPage key={activeTab.id} path={activeTab.path} />
           ) : (
             <EmptyState />

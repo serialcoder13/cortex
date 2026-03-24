@@ -1,3 +1,5 @@
+import { useState, useRef, useEffect } from "react";
+
 export type ActivityView =
   | "calendar"
   | "documents"
@@ -8,6 +10,7 @@ export type ActivityView =
 interface ActivityBarProps {
   activeView: ActivityView;
   onViewChange: (view: ActivityView) => void;
+  onCloseVault?: () => void;
 }
 
 interface ActivityIcon {
@@ -21,7 +24,7 @@ const topIcons: ActivityIcon[] = [
     id: "calendar",
     label: "Daily Journal",
     icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
         <line x1="16" y1="2" x2="16" y2="6" />
         <line x1="8" y1="2" x2="8" y2="6" />
@@ -33,7 +36,7 @@ const topIcons: ActivityIcon[] = [
     id: "documents",
     label: "Documents",
     icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
         <polyline points="14 2 14 8 20 8" />
       </svg>
@@ -43,7 +46,7 @@ const topIcons: ActivityIcon[] = [
     id: "graph",
     label: "Graph View",
     icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <circle cx="6" cy="18" r="3" />
         <circle cx="18" cy="6" r="3" />
         <circle cx="18" cy="18" r="3" />
@@ -57,7 +60,7 @@ const topIcons: ActivityIcon[] = [
     id: "search",
     label: "Search",
     icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
         <circle cx="11" cy="11" r="8" />
         <line x1="21" y1="21" x2="16.65" y2="16.65" />
       </svg>
@@ -65,18 +68,28 @@ const topIcons: ActivityIcon[] = [
   },
 ];
 
-const bottomIcons: ActivityIcon[] = [
-  {
-    id: "settings",
-    label: "Settings",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-        <circle cx="12" cy="12" r="3" />
-      </svg>
-    ),
-  },
-];
+const helpIcon: ActivityIcon = {
+  id: "settings", // not used for navigation, just for type compat
+  label: "Help",
+  icon: (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
+};
+
+const settingsIcon: ActivityIcon = {
+  id: "settings",
+  label: "Settings",
+  icon: (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
+};
 
 function IconButton({
   icon,
@@ -94,7 +107,7 @@ function IconButton({
       type="button"
       title={label}
       onClick={onClick}
-      className="relative w-10 h-10 flex items-center justify-center rounded-md transition-colors"
+      className="relative w-12 h-12 flex items-center justify-center rounded-md transition-colors"
       style={{
         color: active ? "var(--text-primary)" : "var(--text-tertiary)",
       }}
@@ -111,10 +124,28 @@ function IconButton({
   );
 }
 
-export function ActivityBar({ activeView, onViewChange }: Readonly<ActivityBarProps>) {
+export function ActivityBar({ activeView, onViewChange, onCloseVault }: Readonly<ActivityBarProps>) {
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!showSettingsMenu) return;
+    function handleClick(e: MouseEvent) {
+      if (
+        menuRef.current && !menuRef.current.contains(e.target as Node) &&
+        buttonRef.current && !buttonRef.current.contains(e.target as Node)
+      ) {
+        setShowSettingsMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showSettingsMenu]);
+
   return (
     <aside
-      className="w-10 flex flex-col items-center py-2 gap-1 flex-shrink-0"
+      className="w-12 flex flex-col items-center py-2 gap-1 flex-shrink-0"
       style={{
         backgroundColor: "var(--bg-secondary)",
         borderRight: "1px solid var(--border-primary)",
@@ -134,16 +165,60 @@ export function ActivityBar({ activeView, onViewChange }: Readonly<ActivityBarPr
       </div>
 
       {/* Bottom icons */}
-      <div className="flex flex-col items-center gap-1">
-        {bottomIcons.map((item) => (
-          <IconButton
-            key={item.id}
-            icon={item.icon}
-            label={item.label}
-            active={activeView === item.id}
-            onClick={() => onViewChange(item.id)}
-          />
-        ))}
+      <div className="flex flex-col items-center gap-1 relative">
+        <IconButton
+          icon={helpIcon.icon}
+          label={helpIcon.label}
+          active={false}
+          onClick={() => {/* TODO: open help */}}
+        />
+        <div className="relative">
+          <button
+            ref={buttonRef}
+            type="button"
+            title="Settings"
+            onClick={() => setShowSettingsMenu((v) => !v)}
+            className="relative w-12 h-12 flex items-center justify-center rounded-md transition-colors"
+            style={{
+              color: showSettingsMenu ? "var(--text-primary)" : "var(--text-tertiary)",
+            }}
+          >
+            {settingsIcon.icon}
+          </button>
+          {showSettingsMenu && (
+            <div
+              ref={menuRef}
+              className="absolute bottom-0 left-full ml-1 rounded-lg py-1 shadow-lg z-50 min-w-[160px]"
+              style={{
+                backgroundColor: "var(--bg-secondary)",
+                border: "1px solid var(--border-primary)",
+              }}
+            >
+              <button
+                type="button"
+                className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 transition-colors"
+                style={{ color: "var(--text-primary)" }}
+                onClick={() => {
+                  setShowSettingsMenu(false);
+                  onCloseVault?.();
+                }}
+              >
+                Close Vault
+              </button>
+              <button
+                type="button"
+                className="w-full text-left px-3 py-1.5 text-sm hover:opacity-80 transition-colors"
+                style={{ color: "var(--text-primary)" }}
+                onClick={() => {
+                  setShowSettingsMenu(false);
+                  onViewChange("settings");
+                }}
+              >
+                Settings
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </aside>
   );

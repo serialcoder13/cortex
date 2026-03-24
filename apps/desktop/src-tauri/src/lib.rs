@@ -23,6 +23,7 @@ pub fn run() {
             commands::storage::storage_list,
             commands::storage::storage_search,
             commands::storage::storage_create_daily_note,
+            commands::storage::vault_change_password,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cortex");

@@ -61,6 +61,29 @@ pub fn open_vault(path: &str, password: &str, state: &VaultState) -> Result<(), 
     Ok(())
 }
 
+/// Change the vault password.
+///
+/// Verifies the old password, re-encrypts the master key with the new password,
+/// and writes updated keys to disk. The in-memory master key remains unchanged.
+pub fn change_vault_password(
+    path: &str,
+    old_password: &str,
+    new_password: &str,
+) -> Result<(), StorageError> {
+    let keys = read_vault_keys(path)?;
+
+    let new_keys = crypto::change_password(old_password, new_password, &keys)
+        .map_err(|e| StorageError::Encryption(e.to_string()))?;
+
+    // Write updated keys.json.
+    let keys_json = serde_json::to_string_pretty(&new_keys)
+        .map_err(|e| StorageError::Serialization(e.to_string()))?;
+    let keys_path = Path::new(path).join(CORTEX_DIR).join(KEYS_FILE);
+    fs::write(keys_path, keys_json)?;
+
+    Ok(())
+}
+
 /// Check whether a vault exists at the given path by looking for `.cortex/keys.json`.
 pub fn vault_exists(path: &str) -> bool {
     Path::new(path).join(CORTEX_DIR).join(KEYS_FILE).exists()

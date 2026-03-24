@@ -83,4 +83,9 @@ export const storage = {
   async createDailyNote(): Promise<string> {
     return invoke("storage_create_daily_note");
   },
+
+  /** Change the vault password. Requires the current (old) password. */
+  async changePassword(oldPassword: string, newPassword: string): Promise<boolean> {
+    return invoke("vault_change_password", { oldPassword, newPassword });
+  },
 };

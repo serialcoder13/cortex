@@ -45,7 +45,40 @@
       "Bash(ls /Users/kirangrandhi/kiran/cortex/apps/desktop/tailwind.config.*)",
       "Bash(pnpm add:*)",
       "Bash(pnpm tauri:*)",
-      "Bash(xcrun simctl:*)"
+      "Bash(xcrun simctl:*)",
+      "Bash(sips -g all /Users/kirangrandhi/kiran/cortex/apps/desktop/src-tauri/icons/icon.png)",
+      "Bash(python3 -c \"from PIL import Image; print\\(''pillow available''\\)\")",
+      "Bash(python3 -c \"import subprocess; print\\(''''python3 works''''\\)\")",
+      "Bash(pip3 list:*)",
+      "Bash(pip3 install:*)",
+      "Bash(python3:*)",
+      "Bash(mkdir -p icon.iconset)",
+      "Bash(iconutil -c icns icon.iconset -o icon.icns)",
+      "Bash(rm -rf icon.iconset icon_1024.png)",
+      "Bash(ls /Users/kirangrandhi/kiran/cortex/apps/desktop/src-tauri/icons/*.png)",
+      "Bash(cargo clean:*)",
+      "Bash(pnpm --filter @cortex/desktop exec tsc --noEmit)",
+      "Bash(sudo rm:*)",
+      "Bash(rm -rf ~/Library/Caches/com.apple.iconservices*)",
+      "Bash(killall Dock)",
+      "Bash(npx -w apps/desktop tsc --noEmit)",
+      "Bash(npx tauri:*)",
+      "Bash(sips -z 256 256 \"padded icon.png\" --out apps/desktop/src-tauri/icons/256x256.png)",
+      "Bash(sips -z 512 512 \"padded icon.png\" --out apps/desktop/src-tauri/icons/512x512.png)",
+      "Read(//Users/kirangrandhi/Library/Caches/com.cortex.app/**)",
+      "Read(//Users/kirangrandhi/Library/Caches/**)",
+      "Read(//Users/kirangrandhi/Library/**)",
+      "Bash(xargs file:*)",
+      "Bash(sips -g pixelHeight -g pixelWidth /Users/kirangrandhi/kiran/cortex/apps/desktop/src-tauri/icons/icon.png)",
+      "Bash(rm -rfv ~/Library/Caches/com.apple.iconservices*)",
+      "Bash(killall Finder)",
+      "Bash(md5 \"/Users/kirangrandhi/kiran/cortex/padded icon.png\")",
+      "Bash(md5 \"/Users/kirangrandhi/kiran/cortex/apps/desktop/src-tauri/icons/icon.png\")",
+      "Bash(sips -z 256 256 \"roundedcorner.png\" --out apps/desktop/src-tauri/icons/256x256.png)",
+      "Bash(sips -z 512 512 \"roundedcorner.png\" --out apps/desktop/src-tauri/icons/512x512.png)"
+    ],
+    "additionalDirectories": [
+      "/Users/kirangrandhi/Library/Caches/com.cortex.app"
     ]
   }
 }

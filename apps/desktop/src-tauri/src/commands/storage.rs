@@ -74,6 +74,20 @@ pub fn vault_is_unlocked(state: State<'_, VaultState>) -> bool {
     state.is_unlocked()
 }
 
+#[tauri::command]
+pub fn vault_change_password(
+    old_password: String,
+    new_password: String,
+    state: State<'_, VaultState>,
+) -> CmdResult<bool> {
+    let vault_path = state.vault_path.lock().unwrap().clone()
+        .ok_or_else(|| CommandError { message: "Vault not open".into() })?;
+
+    vault::change_vault_password(&vault_path, &old_password, &new_password)
+        .map_err(CommandError::from)?;
+    Ok(true)
+}
+
 // ---- Document commands ----
 
 #[tauri::command]

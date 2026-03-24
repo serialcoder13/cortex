@@ -1,10 +1,26 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 export type StorageBackend = "local" | "tauri-fs" | "sqlite";
 
 export type LlmProvider = "deepseek" | "openai" | "anthropic" | "ollama" | "custom";
 
-export type Theme = "light" | "dark" | "system";
+/** Color palette / theme family */
+export type ThemeName =
+  | "default"
+  | "nord"
+  | "solarized"
+  | "dracula"
+  | "monokai"
+  | "gruvbox"
+  | "catppuccin"
+  | "rose-pine";
+
+/** Light/dark/system appearance mode */
+export type ThemeMode = "light" | "dark" | "system";
+
+/** @deprecated Use ThemeName + ThemeMode instead */
+export type Theme = ThemeMode;
 
 export interface ApiKeyEntry {
   provider: LlmProvider;
@@ -20,8 +36,12 @@ export interface SettingsState {
   apiKeys: Record<string, string>;
   /** Whether auto-organization agent is enabled */
   autoOrganize: boolean;
-  /** Current theme */
-  theme: Theme;
+  /** Current color theme */
+  themeName: ThemeName;
+  /** Light / dark / system mode */
+  themeMode: ThemeMode;
+  /** @deprecated — alias for themeMode, kept for compat */
+  theme: ThemeMode;
   /** Current vault path */
   vaultPath: string | null;
 
@@ -35,8 +55,12 @@ export interface SettingsState {
   removeApiKey: (provider: string) => void;
   /** Toggle auto-organization agent */
   setAutoOrganize: (enabled: boolean) => void;
-  /** Set the theme */
-  setTheme: (theme: Theme) => void;
+  /** Set the color theme */
+  setThemeName: (name: ThemeName) => void;
+  /** Set the appearance mode */
+  setThemeMode: (mode: ThemeMode) => void;
+  /** @deprecated — alias for setThemeMode */
+  setTheme: (theme: ThemeMode) => void;
   /** Set the vault path */
   setVaultPath: (path: string | null) => void;
   /** Reset all settings to defaults */
@@ -48,11 +72,13 @@ const defaultSettings = {
   llmProvider: "openai" as LlmProvider,
   apiKeys: {} as Record<string, string>,
   autoOrganize: false,
-  theme: "system" as Theme,
+  themeName: "default" as ThemeName,
+  themeMode: "system" as ThemeMode,
+  theme: "system" as ThemeMode,
   vaultPath: null as string | null,
 };
 
-export const useSettingsStore = create<SettingsState>((set) => ({
+export const useSettingsStore = create<SettingsState>()(persist((set) => ({
   ...defaultSettings,
 
   setStorageBackend: (storageBackend) => set({ storageBackend }),
@@ -72,9 +98,24 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   setAutoOrganize: (autoOrganize) => set({ autoOrganize }),
 
-  setTheme: (theme) => set({ theme }),
+  setThemeName: (themeName) => set({ themeName }),
+
+  setThemeMode: (themeMode) => set({ themeMode, theme: themeMode }),
+
+  setTheme: (theme) => set({ theme, themeMode: theme }),
 
   setVaultPath: (vaultPath) => set({ vaultPath }),
 
   resetSettings: () => set(defaultSettings),
+}), {
+  name: "cortex-settings",
+  partialize: (state) => ({
+    themeName: state.themeName,
+    themeMode: state.themeMode,
+    theme: state.themeMode,
+    vaultPath: state.vaultPath,
+    llmProvider: state.llmProvider,
+    apiKeys: state.apiKeys,
+    autoOrganize: state.autoOrganize,
+  }),
 }));

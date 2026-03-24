@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useSettingsStore } from "@cortex/store";
 import { storage, type DocumentMeta } from "../lib/storage";
 import { useTabStore } from "../stores/tabs";
 import facebrainSvg from "../assets/facebrain.svg";
+import type { ActivityView } from "./ActivityBar";
 
 // ---------------------------------------------------------------------------
 // Mini Calendar Widget
@@ -119,30 +121,30 @@ function MiniCalendar({ existingPaths }: { existingPaths: Set<string> }) {
     existingPaths.has(dailyNotePath(year, month, day));
 
   return (
-    <div className="px-2 py-2">
+    <div className="px-3 py-3">
       {/* Header */}
-      <div className="flex items-center justify-between mb-1.5 px-1">
-        <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+      <div className="flex items-center justify-between mb-2 px-1">
+        <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
           {MONTH_NAMES[month]} {year}
         </span>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={goToPrevMonth}
-            className="w-5 h-5 flex items-center justify-center rounded hover:opacity-80"
+            className="w-6 h-6 flex items-center justify-center rounded hover:opacity-80"
             style={{ color: "var(--text-tertiary)" }}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
           <button
             type="button"
             onClick={goToNextMonth}
-            className="w-5 h-5 flex items-center justify-center rounded hover:opacity-80"
+            className="w-6 h-6 flex items-center justify-center rounded hover:opacity-80"
             style={{ color: "var(--text-tertiary)" }}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
               <polyline points="9 6 15 12 9 18" />
             </svg>
           </button>
@@ -150,10 +152,10 @@ function MiniCalendar({ existingPaths }: { existingPaths: Set<string> }) {
       </div>
 
       {/* Day-of-week headers */}
-      <div className="grid gap-0" style={{ gridTemplateColumns: "24px repeat(7, 1fr)" }}>
+      <div className="grid gap-0" style={{ gridTemplateColumns: "28px repeat(7, 1fr)" }}>
         <span />
         {MINI_DAY_NAMES.map((d) => (
-          <span key={d} className="text-center text-[10px] py-0.5" style={{ color: "var(--text-muted)" }}>
+          <span key={d} className="text-center text-xs py-1" style={{ color: "var(--text-muted)" }}>
             {d}
           </span>
         ))}
@@ -164,18 +166,18 @@ function MiniCalendar({ existingPaths }: { existingPaths: Set<string> }) {
         <div
           key={`w-${row.weekNum}`}
           className="grid gap-0"
-          style={{ gridTemplateColumns: "24px repeat(7, 1fr)" }}
+          style={{ gridTemplateColumns: "28px repeat(7, 1fr)" }}
         >
-          <span className="text-[9px] flex items-center justify-center" style={{ color: "var(--text-muted)" }}>
+          <span className="text-[10px] flex items-center justify-center" style={{ color: "var(--text-muted)" }}>
             W{row.weekNum}
           </span>
           {row.cells.map((day, ci) => (
-            <div key={`${row.weekNum}-${ci}`} className="flex items-center justify-center">
+            <div key={`${row.weekNum}-${ci}`} className="flex items-center justify-center py-0.5">
               {day !== null ? (
                 <button
                   type="button"
                   onClick={() => handleDayClick(day)}
-                  className="relative w-5 h-5 flex items-center justify-center rounded-full text-[10px] transition-colors"
+                  className="relative w-7 h-7 flex items-center justify-center rounded-full text-xs transition-colors"
                   style={{
                     backgroundColor: isToday(day) ? "var(--accent)" : "transparent",
                     color: isToday(day) ? "#fff" : "var(--text-secondary)",
@@ -184,13 +186,13 @@ function MiniCalendar({ existingPaths }: { existingPaths: Set<string> }) {
                   {day}
                   {hasNote(day) && !isToday(day) && (
                     <span
-                      className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full"
+                      className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full"
                       style={{ backgroundColor: "var(--accent)" }}
                     />
                   )}
                 </button>
               ) : (
-                <span className="w-5 h-5" />
+                <span className="w-7 h-7" />
               )}
             </div>
           ))}
@@ -267,14 +269,118 @@ function buildTree(docs: DocumentMeta[]): TreeNode[] {
 function displayFolderName(name: string, depth: number): string {
   if (depth === 0) {
     if (name === "dates") return "Daily Journal";
+    if (name === "docs") return "Documents";
     if (name === "templates") return "Templates";
   }
   return name;
 }
 
+/** Filter tree to only show docs (exclude dates/ for documents view). */
+function filterDocsOnly(nodes: TreeNode[]): TreeNode[] {
+  return nodes.filter((n) => n.name !== "dates");
+}
+
+/** Collect all file paths in a tree recursively. */
+function collectFilePaths(nodes: TreeNode[]): string[] {
+  const paths: string[] = [];
+  for (const n of nodes) {
+    if (isFolder(n)) {
+      paths.push(...collectFilePaths(n.children));
+    } else {
+      paths.push(n.path);
+    }
+  }
+  return paths;
+}
+
 // ---------------------------------------------------------------------------
 // Tree Item Component
 // ---------------------------------------------------------------------------
+
+/** Inline rename input shown in the tree. */
+function InlineInput({
+  defaultValue,
+  onCommit,
+  onCancel,
+  depth,
+}: {
+  defaultValue: string;
+  onCommit: (value: string) => void;
+  onCancel: () => void;
+  depth: number;
+}) {
+  const [value, setValue] = useState(defaultValue);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const doneRef = useRef(false);
+
+  useEffect(() => {
+    // Small timeout so the input is mounted before focusing.
+    const t = setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  const commit = useCallback(() => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    const trimmed = inputRef.current?.value.trim() ?? "";
+    if (trimmed && trimmed !== defaultValue) {
+      onCommit(trimmed);
+    } else {
+      onCancel();
+    }
+  }, [defaultValue, onCommit, onCancel]);
+
+  const cancel = useCallback(() => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onCancel();
+  }, [onCancel]);
+
+  return (
+    <div
+      className="flex items-center py-0.5 pr-1"
+      style={{ paddingLeft: `${depth * 16 + 8}px` }}
+    >
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); commit(); }
+          if (e.key === "Escape") { e.preventDefault(); cancel(); }
+        }}
+        className="flex-1 text-xs px-1 py-0.5 rounded outline-none"
+        style={{
+          backgroundColor: "var(--bg-tertiary)",
+          color: "var(--text-primary)",
+          border: "1px solid var(--accent)",
+        }}
+      />
+    </div>
+  );
+}
+
+interface TreeItemProps {
+  node: TreeNode;
+  depth: number;
+  activePath: string | null;
+  expandedPaths: Set<string>;
+  onToggleFolder: (path: string) => void;
+  onSelectFile: (path: string, title: string) => void;
+  onDeleteFile?: (path: string) => void;
+  onDeleteFolder?: (path: string, children: TreeNode[]) => void;
+  onCreateSubfolder?: (parentPath: string) => void;
+  onMoveFile?: (filePath: string, targetFolderPath: string) => void;
+  onRenameFile?: (oldPath: string, newName: string) => void;
+  onRenameFolder?: (oldFolderPath: string, newName: string) => void;
+  /** Whether this is the top-level "docs" folder (no delete allowed). */
+  isTopLevel?: boolean;
+}
 
 function TreeItem({
   node,
@@ -283,53 +389,166 @@ function TreeItem({
   expandedPaths,
   onToggleFolder,
   onSelectFile,
-}: {
-  node: TreeNode;
-  depth: number;
-  activePath: string | null;
-  expandedPaths: Set<string>;
-  onToggleFolder: (path: string) => void;
-  onSelectFile: (path: string, title: string) => void;
-}) {
+  onDeleteFile,
+  onDeleteFolder,
+  onCreateSubfolder,
+  onMoveFile,
+  onRenameFile,
+  onRenameFolder,
+  isTopLevel,
+}: TreeItemProps) {
+  const [dragOver, setDragOver] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const dragCounterRef = useRef(0);
+
   if (isFolder(node)) {
     const expanded = expandedPaths.has(node.path);
+
+    // Folder rename inline input
+    if (renaming && !isTopLevel) {
+      return (
+        <InlineInput
+          defaultValue={node.name}
+          depth={depth}
+          onCommit={(newName) => {
+            setRenaming(false);
+            onRenameFolder?.(node.path, newName);
+          }}
+          onCancel={() => setRenaming(false)}
+        />
+      );
+    }
+
     return (
       <div>
-        <button
-          type="button"
-          onClick={() => onToggleFolder(node.path)}
-          className="flex items-center gap-1 w-full text-left py-0.5 pr-2 text-xs rounded transition-colors"
+        <div
+          className="group flex items-center w-full py-0.5 pr-1 text-xs rounded transition-colors"
           style={{
             paddingLeft: `${depth * 16 + 8}px`,
             color: "var(--text-secondary)",
+            backgroundColor: dragOver ? "var(--accent-muted)" : "transparent",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = "var(--bg-hover)";
+            if (!dragOver) e.currentTarget.style.backgroundColor = "var(--bg-hover)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = "transparent";
+            if (!dragOver) e.currentTarget.style.backgroundColor = "transparent";
+          }}
+          onDragEnter={(e) => {
+            e.preventDefault();
+            dragCounterRef.current++;
+            setDragOver(true);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }}
+          onDragLeave={() => {
+            dragCounterRef.current--;
+            if (dragCounterRef.current <= 0) {
+              dragCounterRef.current = 0;
+              setDragOver(false);
+            }
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            dragCounterRef.current = 0;
+            setDragOver(false);
+            const filePath = e.dataTransfer.getData("text/x-cortex-path");
+            if (filePath && onMoveFile) {
+              onMoveFile(filePath, node.path);
+            }
           }}
         >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            className={`flex-shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+          <button
+            type="button"
+            onClick={() => onToggleFolder(node.path)}
+            onDoubleClick={(e) => {
+              if (!isTopLevel) {
+                e.stopPropagation();
+                setRenaming(true);
+              }
+            }}
+            className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
           >
-            <polyline points="9 6 15 12 9 18" />
-          </svg>
-          <span className="truncate font-medium">
-            {displayFolderName(node.name, depth)}
-          </span>
-        </button>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              className={`flex-shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+            >
+              <polyline points="9 6 15 12 9 18" />
+            </svg>
+            <span className="truncate font-medium">
+              {displayFolderName(node.name, depth)}
+            </span>
+          </button>
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            {/* New subfolder button */}
+            {onCreateSubfolder && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCreateSubfolder(node.path);
+                }}
+                className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded cursor-pointer"
+                style={{ color: "var(--text-muted)" }}
+                title="New folder"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  <line x1="12" y1="11" x2="12" y2="17" />
+                  <line x1="9" y1="14" x2="15" y2="14" />
+                </svg>
+              </button>
+            )}
+            {/* Rename folder button (not on top-level docs) */}
+            {onRenameFolder && !isTopLevel && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRenaming(true);
+                }}
+                className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded cursor-pointer"
+                style={{ color: "var(--text-muted)" }}
+                title="Rename folder"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                </svg>
+              </button>
+            )}
+            {/* Delete folder button (not on top-level docs) */}
+            {onDeleteFolder && !isTopLevel && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteFolder(node.path, node.children);
+                }}
+                className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded cursor-pointer"
+                style={{ color: "var(--text-muted)" }}
+                title="Delete folder"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6" />
+                  <path d="M14 11v6" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
         {expanded && (
           <div>
             {node.children
               .sort((a, b) => {
-                // Folders first, then files
                 const aF = isFolder(a) ? 0 : 1;
                 const bF = isFolder(b) ? 0 : 1;
                 if (aF !== bF) return aF - bF;
@@ -344,6 +563,12 @@ function TreeItem({
                   expandedPaths={expandedPaths}
                   onToggleFolder={onToggleFolder}
                   onSelectFile={onSelectFile}
+                  onDeleteFile={onDeleteFile}
+                  onDeleteFolder={onDeleteFolder}
+                  onCreateSubfolder={onCreateSubfolder}
+                  onMoveFile={onMoveFile}
+                  onRenameFile={onRenameFile}
+                  onRenameFolder={onRenameFolder}
                 />
               ))}
           </div>
@@ -356,11 +581,28 @@ function TreeItem({
   const isActive = activePath === node.path;
   const displayName = node.name.replace(/\.md$/, "");
 
+  if (renaming) {
+    return (
+      <InlineInput
+        defaultValue={displayName}
+        depth={depth}
+        onCommit={(newName) => {
+          setRenaming(false);
+          onRenameFile?.(node.path, newName);
+        }}
+        onCancel={() => setRenaming(false)}
+      />
+    );
+  }
+
   return (
-    <button
-      type="button"
-      onClick={() => onSelectFile(node.path, node.doc.title || displayName)}
-      className="flex items-center gap-1 w-full text-left py-0.5 pr-2 text-xs rounded transition-colors"
+    <div
+      className="group flex items-center w-full py-0.5 pr-1 text-xs rounded transition-colors"
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/x-cortex-path", node.path);
+        e.dataTransfer.effectAllowed = "move";
+      }}
       style={{
         paddingLeft: `${depth * 16 + 8}px`,
         backgroundColor: isActive ? "var(--accent-muted)" : "transparent",
@@ -373,29 +615,99 @@ function TreeItem({
         if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
       }}
     >
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        className="flex-shrink-0"
-        style={{ color: "var(--text-muted)" }}
+      <button
+        type="button"
+        draggable={false}
+        onClick={() => onSelectFile(node.path, node.doc.title || displayName)}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          setRenaming(true);
+        }}
+        className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
       >
-        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-        <polyline points="14 2 14 8 20 8" />
-      </svg>
-      <span className="truncate">{displayName}</span>
-    </button>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5}
+          className="flex-shrink-0"
+          style={{ color: "var(--text-muted)" }}
+        >
+          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+          <polyline points="14 2 14 8 20 8" />
+        </svg>
+        <span className="truncate">{displayName}</span>
+      </button>
+      {onDeleteFile && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeleteFile(node.path);
+          }}
+          className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+          style={{ color: "var(--text-muted)" }}
+          title="Delete note"
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <path d="M10 11v6" />
+            <path d="M14 11v6" />
+          </svg>
+        </button>
+      )}
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// FileTree Component
+// Bottom bar (shared between both panels)
 // ---------------------------------------------------------------------------
 
-export function FileTree() {
+function VaultBottomBar() {
+  const vaultPath = useSettingsStore((s) => s.vaultPath);
+
+  return (
+    <>
+      <div style={{ borderTop: "1px solid var(--border-primary)" }} />
+      <div
+        className="flex items-center gap-2 px-3 py-2"
+        style={{ color: "var(--text-secondary)" }}
+      >
+        <img src={facebrainSvg} alt="" className="w-6 h-6 rounded-md" />
+        <span className="text-xs font-medium flex-1 truncate">{vaultPath?.split("/").pop() ?? "Vault"}</span>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar shell
+// ---------------------------------------------------------------------------
+
+function SidebarShell({ children }: { children: React.ReactNode }) {
+  return (
+    <aside
+      className="w-60 flex flex-col flex-shrink-0 overflow-hidden"
+      style={{
+        backgroundColor: "var(--bg-secondary)",
+        borderRight: "1px solid var(--border-primary)",
+      }}
+    >
+      {children}
+      <VaultBottomBar />
+    </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// FileTree Component (accepts view to switch layout)
+// ---------------------------------------------------------------------------
+
+export function FileTree({ view = "calendar" }: { view?: ActivityView }) {
   const [docs, setDocs] = useState<DocumentMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -411,6 +723,15 @@ export function FileTree() {
 
   // Existing paths for calendar dots
   const existingPaths = useMemo(() => new Set(docs.map((d) => d.path)), [docs]);
+
+  const refreshDocs = useCallback(async () => {
+    try {
+      const allDocs = await storage.listDocuments();
+      setDocs(allDocs);
+    } catch (err) {
+      console.error("Failed to list documents:", err);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -428,6 +749,13 @@ export function FileTree() {
     load();
     return () => { cancelled = true; };
   }, []);
+
+  // Refresh when documents change (e.g. after rename).
+  useEffect(() => {
+    const handler = () => refreshDocs();
+    globalThis.addEventListener("cortex:docs-changed", handler);
+    return () => globalThis.removeEventListener("cortex:docs-changed", handler);
+  }, [refreshDocs]);
 
   const tree = useMemo(() => buildTree(docs), [docs]);
 
@@ -469,17 +797,172 @@ export function FileTree() {
     [openTab],
   );
 
+  const handleCreateNote = useCallback(async () => {
+    const id = Date.now();
+    const path = `docs/untitled-${id}.md`;
+    const content = `---\ntitle: "Untitled"\ncreated: ${new Date().toISOString()}\n---\n\n`;
+    try {
+      await storage.writeDocument(path, content);
+      await refreshDocs();
+      openTab(path, "Untitled");
+    } catch (err) {
+      console.error("Failed to create note:", err);
+    }
+  }, [refreshDocs, openTab]);
+
+  // State for inline "new folder" input.
+  const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
+
+  const handleStartCreateFolder = useCallback((parentPath?: string) => {
+    const base = parentPath ?? "docs";
+    setNewFolderParent(base);
+    // Expand the parent so the input is visible.
+    setExpandedPaths((prev) => new Set([...prev, base]));
+  }, []);
+
+  const handleCommitCreateFolder = useCallback(async (name: string) => {
+    if (!newFolderParent) return;
+    const folderName = name.trim().replaceAll(/[^\w\s-]/g, "").replaceAll(/^\s+|\s+$/g, "");
+    if (!folderName) { setNewFolderParent(null); return; }
+    const folderPath = `${newFolderParent}/${folderName}`;
+    // Create an initial untitled note inside the folder so the folder appears in the listing.
+    const id = Date.now();
+    const path = `${folderPath}/untitled-${id}.md`;
+    const content = `---\ntitle: "Untitled"\ncreated: ${new Date().toISOString()}\n---\n\n`;
+    try {
+      await storage.writeDocument(path, content);
+      await refreshDocs();
+      setExpandedPaths((prev) => new Set([...prev, folderPath]));
+    } catch (err) {
+      console.error("Failed to create folder:", err);
+    }
+    setNewFolderParent(null);
+  }, [newFolderParent, refreshDocs]);
+
+  const handleRenameFile = useCallback(async (oldPath: string, newName: string) => {
+    const slug = newName.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-+|-+$/g, "");
+    if (!slug) return;
+    const parts = oldPath.split("/");
+    const dir = parts.slice(0, -1).join("/");
+    const newPath = dir ? `${dir}/${slug}.md` : `${slug}.md`;
+    if (newPath === oldPath) return;
+    try {
+      const content = await storage.readDocument(oldPath);
+      await storage.writeDocument(newPath, content);
+      await storage.deleteDocument(oldPath);
+      const tab = useTabStore.getState().tabs.find((t) => t.path === oldPath);
+      if (tab) {
+        useTabStore.getState().updateTabPath(tab.id, newPath);
+        useTabStore.getState().updateTabTitle(tab.id, newName);
+      }
+      await refreshDocs();
+    } catch (err) {
+      console.error("Failed to rename file:", err);
+    }
+  }, [refreshDocs]);
+
+  const handleRenameFolder = useCallback(async (oldFolderPath: string, newName: string) => {
+    const cleanName = newName.trim().replaceAll(/[^\w\s-]/g, "").replaceAll(/^\s+|\s+$/g, "");
+    if (!cleanName) return;
+    const parentDir = oldFolderPath.split("/").slice(0, -1).join("/");
+    const newFolderPath = parentDir ? `${parentDir}/${cleanName}` : cleanName;
+    if (newFolderPath === oldFolderPath) return;
+    try {
+      // Move all files from old folder to new folder.
+      const allDocs = await storage.listDocuments();
+      const folderDocs = allDocs.filter((d) => d.path.startsWith(oldFolderPath + "/"));
+      for (const doc of folderDocs) {
+        const relativePath = doc.path.slice(oldFolderPath.length);
+        const newPath = newFolderPath + relativePath;
+        const content = await storage.readDocument(doc.path);
+        await storage.writeDocument(newPath, content);
+        await storage.deleteDocument(doc.path);
+        // Update open tab paths.
+        const tab = useTabStore.getState().tabs.find((t) => t.path === doc.path);
+        if (tab) useTabStore.getState().updateTabPath(tab.id, newPath);
+      }
+      // Update expanded paths.
+      setExpandedPaths((prev) => {
+        const next = new Set<string>();
+        for (const p of prev) {
+          if (p === oldFolderPath) next.add(newFolderPath);
+          else if (p.startsWith(oldFolderPath + "/")) next.add(newFolderPath + p.slice(oldFolderPath.length));
+          else next.add(p);
+        }
+        return next;
+      });
+      await refreshDocs();
+    } catch (err) {
+      console.error("Failed to rename folder:", err);
+    }
+  }, [refreshDocs]);
+
+  const handleDeleteFile = useCallback(async (path: string) => {
+    if (!globalThis.confirm(`Delete "${path.split("/").pop()}"?`)) return;
+    try {
+      await storage.deleteDocument(path);
+      const tab = useTabStore.getState().tabs.find((t) => t.path === path);
+      if (tab) useTabStore.getState().closeTab(tab.id);
+      await refreshDocs();
+    } catch (err) {
+      console.error("Failed to delete file:", err);
+    }
+  }, [refreshDocs]);
+
+  const handleDeleteFolder = useCallback(async (folderPath: string, children: TreeNode[]) => {
+    const paths = collectFilePaths(children);
+    const displayName = folderPath.split("/").pop() ?? folderPath;
+    const confirmed = await new Promise<boolean>((resolve) => {
+      resolve(globalThis.confirm(`Delete folder "${displayName}" and ${paths.length} file(s)?`));
+    });
+    if (!confirmed) return;
+    try {
+      for (const p of paths) {
+        await storage.deleteDocument(p);
+        const tab = useTabStore.getState().tabs.find((t) => t.path === p);
+        if (tab) useTabStore.getState().closeTab(tab.id);
+      }
+      await refreshDocs();
+    } catch (err) {
+      console.error("Failed to delete folder:", err);
+    }
+  }, [refreshDocs]);
+
+  const handleMoveFile = useCallback(async (filePath: string, targetFolderPath: string) => {
+    const fileName = filePath.split("/").pop();
+    if (!fileName) return;
+    const newPath = `${targetFolderPath}/${fileName}`;
+    if (newPath === filePath) return;
+    try {
+      const content = await storage.readDocument(filePath);
+      await storage.writeDocument(newPath, content);
+      await storage.deleteDocument(filePath);
+      // Update the tab path if this file is open.
+      const tab = useTabStore.getState().tabs.find((t) => t.path === filePath);
+      if (tab) useTabStore.getState().updateTabPath(tab.id, newPath);
+      await refreshDocs();
+    } catch (err) {
+      console.error("Failed to move file:", err);
+    }
+  }, [refreshDocs]);
+
+  // ---- Calendar view: calendar at top, no file browser ----
+  if (view === "calendar") {
+    return (
+      <SidebarShell>
+        <MiniCalendar existingPaths={existingPaths} />
+        <div style={{ borderTop: "1px solid var(--border-primary)" }} />
+        <div className="flex-1" />
+      </SidebarShell>
+    );
+  }
+
+  // ---- Documents view: search + toolbar + file tree ----
   return (
-    <aside
-      className="w-60 flex flex-col flex-shrink-0 overflow-hidden"
-      style={{
-        backgroundColor: "var(--bg-secondary)",
-        borderRight: "1px solid var(--border-primary)",
-      }}
-    >
-      {/* Search input */}
-      <div className="px-2 pt-2 pb-1">
-        <div className="relative">
+    <SidebarShell>
+      {/* Search + action buttons */}
+      <div className="px-2 pt-2 pb-1 flex items-center gap-1">
+        <div className="relative flex-1">
           <svg
             width="14"
             height="14"
@@ -506,6 +989,38 @@ export function FileTree() {
             }}
           />
         </div>
+        {/* New note */}
+        <button
+          type="button"
+          onClick={handleCreateNote}
+          className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
+          style={{ color: "var(--text-muted)" }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.backgroundColor = "var(--bg-hover)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.backgroundColor = "transparent"; }}
+          title="New note"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+            <line x1="12" y1="11" x2="12" y2="17" />
+            <line x1="9" y1="14" x2="15" y2="14" />
+          </svg>
+        </button>
+        {/* New folder */}
+        <button
+          type="button"
+          onClick={() => handleStartCreateFolder()}
+          className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded transition-colors"
+          style={{ color: "var(--text-muted)" }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.backgroundColor = "var(--bg-hover)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.backgroundColor = "transparent"; }}
+          title="New folder"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            <line x1="12" y1="11" x2="12" y2="17" />
+            <line x1="9" y1="14" x2="15" y2="14" />
+          </svg>
+        </button>
       </div>
 
       {/* Tree */}
@@ -514,65 +1029,42 @@ export function FileTree() {
           <div className="px-3 py-2 text-xs" style={{ color: "var(--text-muted)" }}>
             Loading...
           </div>
-        ) : filteredTree.length === 0 ? (
+        ) : filteredTree.length === 0 && !newFolderParent ? (
           <div className="px-3 py-2 text-xs" style={{ color: "var(--text-muted)" }}>
             {searchQuery ? "No matching files" : "No documents yet"}
           </div>
         ) : (
-          filteredTree.map((node) => (
-            <TreeItem
-              key={node.path || node.name}
-              node={node}
-              depth={0}
-              activePath={activePath}
-              expandedPaths={expandedPaths}
-              onToggleFolder={handleToggleFolder}
-              onSelectFile={handleSelectFile}
-            />
-          ))
+          <>
+            {filterDocsOnly(filteredTree).map((node) => (
+              <TreeItem
+                key={node.path || node.name}
+                node={node}
+                depth={0}
+                activePath={activePath}
+                expandedPaths={expandedPaths}
+                onToggleFolder={handleToggleFolder}
+                onSelectFile={handleSelectFile}
+                onDeleteFile={handleDeleteFile}
+                onDeleteFolder={handleDeleteFolder}
+                onCreateSubfolder={handleStartCreateFolder}
+                onMoveFile={handleMoveFile}
+                onRenameFile={handleRenameFile}
+                onRenameFolder={handleRenameFolder}
+                isTopLevel={node.name === "docs"}
+              />
+            ))}
+            {/* Inline input for new folder */}
+            {newFolderParent && (
+              <InlineInput
+                defaultValue=""
+                depth={newFolderParent === "docs" ? 1 : 2}
+                onCommit={handleCommitCreateFolder}
+                onCancel={() => setNewFolderParent(null)}
+              />
+            )}
+          </>
         )}
       </div>
-
-      {/* Divider */}
-      <div style={{ borderTop: "1px solid var(--border-primary)" }} />
-
-      {/* Mini Calendar */}
-      <MiniCalendar existingPaths={existingPaths} />
-
-      {/* Divider */}
-      <div style={{ borderTop: "1px solid var(--border-primary)" }} />
-
-      {/* Bottom bar */}
-      <div
-        className="flex items-center gap-2 px-3 py-2"
-        style={{ color: "var(--text-secondary)" }}
-      >
-        <img src={facebrainSvg} alt="" className="w-4 h-4 opacity-70" />
-        <span className="text-xs font-medium flex-1 truncate">Second Brain</span>
-        <button
-          type="button"
-          className="w-5 h-5 flex items-center justify-center rounded hover:opacity-80"
-          style={{ color: "var(--text-muted)" }}
-          title="Help"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-            <line x1="12" y1="17" x2="12.01" y2="17" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          className="w-5 h-5 flex items-center justify-center rounded hover:opacity-80"
-          style={{ color: "var(--text-muted)" }}
-          title="Settings"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-        </button>
-      </div>
-    </aside>
+    </SidebarShell>
   );
 }

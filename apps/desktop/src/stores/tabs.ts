@@ -4,6 +4,10 @@ export interface Tab {
   id: string;
   path: string | null; // null = new/empty tab
   title: string;
+  /** Preview tabs are shown in italics and get replaced when opening another doc. */
+  preview: boolean;
+  /** True when the document has unsaved changes. */
+  dirty: boolean;
 }
 
 interface TabStore {
@@ -13,6 +17,11 @@ interface TabStore {
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTabTitle: (id: string, title: string) => void;
+  updateTabPath: (id: string, path: string) => void;
+  /** Pin the tab (no longer a preview). */
+  pinTab: (id: string) => void;
+  /** Mark a tab as dirty (unsaved changes) or clean. */
+  setTabDirty: (id: string, dirty: boolean) => void;
   openNewTab: () => void;
 }
 
@@ -39,7 +48,18 @@ export const useTabStore = create<TabStore>((set, get) => ({
     if (activeTab && activeTab.path === null) {
       const updated = tabs.map((t) =>
         t.id === activeTab.id
-          ? { ...t, path, title: title ?? pathToTitle(path) }
+          ? { ...t, path, title: title ?? pathToTitle(path), preview: true, dirty: false }
+          : t,
+      );
+      set({ tabs: updated });
+      return;
+    }
+
+    // If the active tab is a preview tab, replace it instead of opening a new one.
+    if (activeTab && activeTab.preview) {
+      const updated = tabs.map((t) =>
+        t.id === activeTab.id
+          ? { ...t, path, title: title ?? pathToTitle(path), preview: true, dirty: false }
           : t,
       );
       set({ tabs: updated });
@@ -47,7 +67,7 @@ export const useTabStore = create<TabStore>((set, get) => ({
     }
 
     const id = generateId();
-    const newTab: Tab = { id, path, title: title ?? pathToTitle(path) };
+    const newTab: Tab = { id, path, title: title ?? pathToTitle(path), preview: true, dirty: false };
     set({ tabs: [...tabs, newTab], activeTabId: id });
   },
 
@@ -65,7 +85,6 @@ export const useTabStore = create<TabStore>((set, get) => ({
 
     let newActiveId = activeTabId;
     if (activeTabId === id) {
-      // Activate the next tab, or the previous one if we closed the last tab.
       const newIndex = Math.min(index, newTabs.length - 1);
       newActiveId = newTabs[newIndex]?.id ?? null;
     }
@@ -83,9 +102,27 @@ export const useTabStore = create<TabStore>((set, get) => ({
     }));
   },
 
+  updateTabPath: (id: string, path: string) => {
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.id === id ? { ...t, path } : t)),
+    }));
+  },
+
+  pinTab: (id: string) => {
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.id === id ? { ...t, preview: false } : t)),
+    }));
+  },
+
+  setTabDirty: (id: string, dirty: boolean) => {
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.id === id ? { ...t, dirty } : t)),
+    }));
+  },
+
   openNewTab: () => {
     const id = generateId();
-    const newTab: Tab = { id, path: null, title: "New tab" };
+    const newTab: Tab = { id, path: null, title: "New tab", preview: false, dirty: false };
     set((state) => ({
       tabs: [...state.tabs, newTab],
       activeTabId: id,

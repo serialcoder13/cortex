@@ -12,9 +12,24 @@ import {
   getBlockDefinition,
 } from "@cortex/editor";
 import { useDocument } from "../lib/hooks/useDocument";
+import { storage } from "../lib/storage";
 import { useTabStore } from "../stores/tabs";
 
 type SaveState = "idle" | "saving" | "saved";
+
+/** Whether a path is a daily journal note (should not be renamed). */
+function isDailyNote(path: string): boolean {
+  return path.startsWith("dates/");
+}
+
+/** Normalize a title into a filename-safe slug. */
+function normalizeTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "untitled";
+}
 
 /** Map internal block type IDs to human-readable labels for the status bar. */
 function blockTypeLabel(type: string): string {
@@ -28,7 +43,12 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   const updateTabTitle = useTabStore((s) => s.updateTabTitle);
+  const updateTabPath = useTabStore((s) => s.updateTabPath);
+  const pinTab = useTabStore((s) => s.pinTab);
+  const setTabDirty = useTabStore((s) => s.setTabDirty);
   const activeTabId = useTabStore((s) => s.activeTabId);
+
+  const renameTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const { content, loading, saving, save, saveNow } = useDocument(docPath);
 
@@ -47,18 +67,25 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
   const prevSavingRef = useRef(saving);
   useEffect(() => {
     if (prevSavingRef.current && !saving) {
-      setSaveState("saved");
-      // After 2 seconds, reset to idle only if no new changes came in.
-      clearTimeout(saveStateTimerRef.current);
-      saveStateTimerRef.current = setTimeout(() => {
-        setSaveState((cur) => (cur === "saved" ? "idle" : cur));
-      }, 2000);
+      markSaved();
     }
     prevSavingRef.current = saving;
   }, [saving]);
 
+  const markSaved = useCallback(() => {
+    setSaveState("saved");
+    if (activeTabId) setTabDirty(activeTabId, false);
+    clearTimeout(saveStateTimerRef.current);
+    saveStateTimerRef.current = setTimeout(() => {
+      setSaveState((cur) => (cur === "saved" ? "idle" : cur));
+    }, 2000);
+  }, [activeTabId, setTabDirty]);
+
   useEffect(() => {
-    return () => clearTimeout(saveStateTimerRef.current);
+    return () => {
+      clearTimeout(saveStateTimerRef.current);
+      clearTimeout(renameTimerRef.current);
+    };
   }, []);
 
   // ---- Title state ----
@@ -154,44 +181,87 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
   const handleChange = useCallback(
     (doc: EditorDocument) => {
       if (!docPath) return;
+      // Pin the tab (no longer preview) and mark dirty on first edit.
+      if (activeTabId) {
+        pinTab(activeTabId);
+        setTabDirty(activeTabId, true);
+      }
       // Mark as unsaved.
       clearTimeout(saveStateTimerRef.current);
       setSaveState("idle");
       updateCounts(doc);
       save(buildMarkdown(doc));
     },
-    [docPath, save, buildMarkdown, updateCounts],
+    [docPath, save, buildMarkdown, updateCounts, activeTabId, pinTab, setTabDirty],
   );
 
   const handleIdle = useCallback(
-    (doc: EditorDocument) => {
+    async (doc: EditorDocument) => {
       if (!docPath || !content) return;
-      saveNow(buildMarkdown(doc));
+      await saveNow(buildMarkdown(doc));
+      markSaved();
     },
-    [docPath, content, saveNow, buildMarkdown],
+    [docPath, content, saveNow, buildMarkdown, markSaved],
   );
 
   const handleBlur = useCallback(
-    (doc: EditorDocument) => {
+    async (doc: EditorDocument) => {
       if (!docPath || !content) return;
-      saveNow(buildMarkdown(doc));
+      await saveNow(buildMarkdown(doc));
+      markSaved();
     },
-    [docPath, content, saveNow, buildMarkdown],
+    [docPath, content, saveNow, buildMarkdown, markSaved],
   );
 
   // ---- Title change ----
   const handleTitleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      setTitle(e.target.value);
+      const newTitle = e.target.value;
+      setTitle(newTitle);
       // Mark as unsaved so the indicator updates.
       clearTimeout(saveStateTimerRef.current);
       setSaveState("idle");
-      // Update tab title.
+      // Pin tab and update title.
       if (activeTabId) {
-        updateTabTitle(activeTabId, e.target.value || "Untitled");
+        pinTab(activeTabId);
+        setTabDirty(activeTabId, true);
+        updateTabTitle(activeTabId, newTitle || "Untitled");
+      }
+
+      // For non-daily docs, debounce a file rename based on the normalized title.
+      if (!isDailyNote(docPath)) {
+        clearTimeout(renameTimerRef.current);
+        renameTimerRef.current = setTimeout(async () => {
+          const slug = normalizeTitle(newTitle);
+          if (!slug) return;
+          // Compute new path: keep the parent directory, change the filename.
+          const parts = docPath.split("/");
+          const dir = parts.slice(0, -1).join("/");
+          const newPath = dir ? `${dir}/${slug}.md` : `${slug}.md`;
+          if (newPath === docPath) return;
+          try {
+            // Build updated content with the new title in frontmatter before writing.
+            const editorDoc = editorRef.current?.getDocument();
+            const markdown = editorDoc ? blocksToMarkdown(editorDoc.blocks) : "";
+            const fm = content ? parseFrontmatter(content).frontmatter : {};
+            const updatedContent = stringifyFrontmatter(
+              { ...fm, title: newTitle, modified: new Date().toISOString() },
+              markdown,
+            );
+            await storage.writeDocument(newPath, updatedContent);
+            await storage.deleteDocument(docPath);
+            if (activeTabId) {
+              updateTabPath(activeTabId, newPath);
+            }
+            // Notify file tree to refresh.
+            globalThis.dispatchEvent(new CustomEvent("cortex:docs-changed"));
+          } catch {
+            // Rename failed — silently ignore.
+          }
+        }, 1500);
       }
     },
-    [activeTabId, updateTabTitle],
+    [activeTabId, updateTabTitle, updateTabPath, docPath],
   );
 
   const handleTitleKeyDown = useCallback(
@@ -257,9 +327,10 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
           value={title}
           onChange={handleTitleChange}
           onKeyDown={handleTitleKeyDown}
+          readOnly={isDailyNote(docPath)}
           placeholder="Untitled"
           className="text-3xl font-bold bg-transparent border-none outline-none w-full"
-          style={{ color: "var(--text-primary)" }}
+          style={{ color: "var(--text-primary)", cursor: isDailyNote(docPath) ? "default" : undefined }}
         />
 
         {/* Breadcrumbs */}

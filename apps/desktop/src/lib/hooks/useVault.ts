@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { useSettingsStore } from "@cortex/store";
 import { storage } from "../storage";
 
 export interface UseVaultReturn {
@@ -6,6 +7,8 @@ export interface UseVaultReturn {
   isUnlocked: boolean;
   /** Filesystem path of the open vault (null when no vault is active). */
   vaultPath: string | null;
+  /** Last used vault path from settings (for pre-filling the form). */
+  lastVaultPath: string | null;
   /** True while the initial unlock-check is in progress. */
   loading: boolean;
   /** Human-readable error message from the last failed operation. */
@@ -27,6 +30,9 @@ export function useVault(): UseVaultReturn {
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const lastVaultPath = useSettingsStore((s) => s.vaultPath);
+  const persistVaultPath = useSettingsStore((s) => s.setVaultPath);
 
   // On mount, check whether the backend already has an unlocked vault (e.g.
   // when the window is re-created while the app is still running).
@@ -65,6 +71,7 @@ export function useVault(): UseVaultReturn {
         const { recovery_key } = await storage.createVault(path, password);
         setIsUnlocked(true);
         setVaultPath(path);
+        persistVaultPath(path);
         return recovery_key;
       } catch (err) {
         const message =
@@ -75,7 +82,7 @@ export function useVault(): UseVaultReturn {
         setLoading(false);
       }
     },
-    [],
+    [persistVaultPath],
   );
 
   const openVault = useCallback(
@@ -87,6 +94,7 @@ export function useVault(): UseVaultReturn {
         if (ok) {
           setIsUnlocked(true);
           setVaultPath(path);
+          persistVaultPath(path);
         } else {
           setError("Incorrect password or corrupted vault");
         }
@@ -100,7 +108,7 @@ export function useVault(): UseVaultReturn {
         setLoading(false);
       }
     },
-    [],
+    [persistVaultPath],
   );
 
   const lockVault = useCallback(async () => {
@@ -109,6 +117,7 @@ export function useVault(): UseVaultReturn {
       await storage.lockVault();
       setIsUnlocked(false);
       setVaultPath(null);
+      // Don't clear persistedVaultPath — we want to remember it for next open
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to lock vault";
@@ -116,5 +125,5 @@ export function useVault(): UseVaultReturn {
     }
   }, []);
 
-  return { isUnlocked, vaultPath, loading, error, createVault, openVault, lockVault };
+  return { isUnlocked, vaultPath, lastVaultPath, loading, error, createVault, openVault, lockVault };
 }

@@ -11,4 +11,6 @@ export type {
   SettingsState,
   StorageBackend,
   Theme,
+  ThemeName,
+  ThemeMode,
 } from "./settings";
