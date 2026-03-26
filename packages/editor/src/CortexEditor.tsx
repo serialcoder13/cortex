@@ -149,6 +149,88 @@ function AddBlockIcon() {
   );
 }
 
+// ---- Drag Handle Overlay (rendered outside contentEditable) ----
+
+function DragHandleOverlay({
+  blockId,
+  editorRef,
+  onDragStart,
+  onDragEnd,
+}: Readonly<{
+  blockId: string;
+  editorRef: React.RefObject<HTMLDivElement | null>;
+  onDragStart: (e: React.DragEvent, id: string) => void;
+  onDragEnd: () => void;
+}>) {
+  const [pos, setPos] = useState<{ top: number } | null>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const blockEl = editor.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement | null;
+    if (!blockEl) return;
+
+    const updatePos = () => {
+      const editorRect = editor.parentElement?.getBoundingClientRect();
+      const blockRect = blockEl.getBoundingClientRect();
+      if (editorRect) {
+        setPos({ top: blockRect.top - editorRect.top + 4 });
+      }
+    };
+
+    updatePos();
+
+    const onEnter = () => setVisible(true);
+    const onLeave = () => setVisible(false);
+
+    blockEl.addEventListener("mouseenter", onEnter);
+    blockEl.addEventListener("mouseleave", onLeave);
+
+    // Update position on scroll/resize
+    const observer = new ResizeObserver(updatePos);
+    observer.observe(blockEl);
+
+    return () => {
+      blockEl.removeEventListener("mouseenter", onEnter);
+      blockEl.removeEventListener("mouseleave", onLeave);
+      observer.disconnect();
+    };
+  }, [blockId, editorRef]);
+
+  if (!pos) return null;
+
+  return (
+    <div
+      draggable
+      onDragStart={(e) => onDragStart(e, blockId)}
+      onDragEnd={onDragEnd}
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+      style={{
+        position: "absolute",
+        left: -32,
+        top: pos.top,
+        display: "flex",
+        width: 24,
+        height: 24,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 4,
+        color: "var(--text-muted)",
+        cursor: "grab",
+        opacity: visible ? 1 : 0,
+        transition: "opacity 150ms",
+        zIndex: 10,
+      }}
+      aria-label="Drag to reorder"
+    >
+      <DragHandleIcon />
+    </div>
+  );
+}
+
 // ---- Component ----
 
 export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
@@ -772,20 +854,43 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       [doc],
     );
 
-    // ---- Check if document is empty ----
+    // ---- Check if document is empty (for placeholder) ----
     const firstBlock = doc.blocks[0];
     const isEmpty =
       doc.blocks.length === 1 &&
       firstBlock?.type === "paragraph" &&
       getPlainText(firstBlock.content) === "";
 
+    // Toggle data-empty on the editor root for CSS-based placeholder.
+    // Using useEffect + DOM attribute so the placeholder hides instantly
+    // on browser input, not waiting for React re-render.
+    const placeholderRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+      const root = rootRef.current;
+      if (!root || readOnly) return;
+
+      const update = () => {
+        const textContent = root.textContent?.replace(/\u200B/g, "").trim() ?? "";
+        const show = textContent.length === 0;
+        if (placeholderRef.current) {
+          placeholderRef.current.style.display = show ? "" : "none";
+        }
+      };
+
+      update(); // Initial check
+
+      root.addEventListener("input", update);
+      return () => root.removeEventListener("input", update);
+    }, [readOnly, doc.blocks.length]);
+
     // ---- Render ----
     return (
-      <div className={`cx-editor-container cx-relative ${className ?? ""}`}>
+      <div className={`cx-editor-container ${className ?? ""}`} style={{ position: "relative" }}>
         {/* The contentEditable editor area */}
         <div
           ref={rootRef}
-          className="cx-editor cx-relative cx-min-h-[200px] cx-outline-none"
+          className="cx-editor"
+          style={{ position: "relative", minHeight: 200, outline: "none" }}
           contentEditable={!readOnly}
           suppressContentEditableWarning
           tabIndex={0}
@@ -803,81 +908,21 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           onClick={onRootClick}
           spellCheck
         >
-          {isEmpty && !readOnly && (
-            <div
-              className="cx-pointer-events-none cx-absolute cx-left-0 cx-top-0 cx-select-none cx-text-base"
-              style={{ color: "var(--text-muted)" }}
-              aria-hidden="true"
-            >
-              {placeholder}
-            </div>
-          )}
           {doc.blocks.map((block, blockIndex) => (
             <div
               key={block.id}
               data-block-id={block.id}
-              className={`cx-block-wrapper cx-group cx-relative cx-py-1 ${
-                dragState.draggingBlockId === block.id ? "cx-opacity-50" : ""
-              }`}
+              className="cx-block-wrapper"
+              style={{
+                position: "relative",
+                padding: "4px 0",
+                opacity: dragState.draggingBlockId === block.id ? 0.5 : 1,
+              }}
               onDragOver={(e) => handleDragOver(e, blockIndex)}
               onDragLeave={handleDragLeave}
               onDrop={(e) => handleDrop(e, blockIndex)}
             >
-              {/* Drop indicator line */}
-              {dragState.dropTargetIndex === blockIndex && dragState.draggingBlockId !== block.id && (
-                <div
-                  className="cx-pointer-events-none cx-absolute cx-left-0 cx-right-0 cx-top-0 cx-h-0.5"
-                  style={{ backgroundColor: "var(--accent)" }}
-                  aria-hidden="true"
-                />
-              )}
-
-              {/* Add button + Drag handle */}
-              {!readOnly && (
-                <div
-                  className="cx-absolute cx--left-14 cx-top-0.5 cx-flex cx-items-center cx-gap-0.5 cx-opacity-0 cx-transition-opacity group-hover:cx-opacity-100"
-                  contentEditable={false}
-                  suppressContentEditableWarning
-                >
-                  <button
-                    type="button"
-                    className="cx-flex cx-h-6 cx-w-6 cx-items-center cx-justify-center cx-rounded cx-transition-colors"
-                    style={{ color: "var(--text-muted)" }}
-                    onClick={() => onAddBlock(block.id)}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = "var(--bg-hover)";
-                      e.currentTarget.style.color = "var(--text-secondary)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = "transparent";
-                      e.currentTarget.style.color = "var(--text-muted)";
-                    }}
-                    aria-label="Add block below"
-                  >
-                    <AddBlockIcon />
-                  </button>
-                  <div
-                    draggable
-                    role="button"
-                    tabIndex={-1}
-                    onDragStart={(e) => handleDragStart(e, block.id)}
-                    onDragEnd={handleDragEnd}
-                    className="cx-flex cx-h-6 cx-w-6 cx-cursor-grab cx-items-center cx-justify-center cx-rounded cx-transition-colors active:cx-cursor-grabbing"
-                    style={{ color: "var(--text-muted)" }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = "var(--bg-hover)";
-                      e.currentTarget.style.color = "var(--text-secondary)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = "transparent";
-                      e.currentTarget.style.color = "var(--text-muted)";
-                    }}
-                    aria-label="Drag to reorder"
-                  >
-                    <DragHandleIcon />
-                  </div>
-                </div>
-              )}
+              {/* Drop indicators and drag handles are rendered outside contentEditable */}
 
               <BlockRenderer
                 block={
@@ -890,15 +935,31 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
               />
             </div>
           ))}
-          {/* Drop indicator at the end */}
-          {dragState.dropTargetIndex === doc.blocks.length && dragState.draggingBlockId !== null && (
-            <div
-              className="cx-pointer-events-none cx-h-0.5"
-              style={{ backgroundColor: "var(--accent)" }}
-              aria-hidden="true"
-            />
-          )}
+          {/* Drop indicators rendered outside contentEditable */}
         </div>
+
+        {/* Placeholder — outside contentEditable, visibility toggled via DOM input event */}
+        {!readOnly && (
+          <div
+            ref={placeholderRef}
+            className="cx-placeholder"
+            style={{ display: isEmpty ? "" : "none" }}
+            aria-hidden="true"
+          >
+            {placeholder}
+          </div>
+        )}
+
+        {/* Drag handles — rendered outside contentEditable to avoid breaking editing */}
+        {!readOnly && doc.blocks.map((block) => (
+          <DragHandleOverlay
+            key={`handle-${block.id}`}
+            blockId={block.id}
+            editorRef={rootRef}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          />
+        ))}
 
         {/* Slash Command Menu — rendered outside the contentEditable div */}
         {slashCommand.active && (

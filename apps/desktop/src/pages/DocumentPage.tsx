@@ -375,8 +375,8 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
       </div>
 
       {/* Editor area — fills remaining space */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-6 pb-6">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="mx-auto max-w-3xl px-6 pb-6 pl-12">
           <CortexEditor
             ref={editorRef}
             initialDocument={initialDoc}
@@ -384,7 +384,7 @@ export function DocumentPage({ path }: Readonly<{ path: string }>) {
             onIdle={handleIdle}
             onBlur={handleBlur}
             idleDebounceMs={60000}
-            placeholder="Type '/' for commands..."
+            placeholder="Press '/' for commands, or just start typing..."
             className="min-h-[60vh]"
           />
         </div>

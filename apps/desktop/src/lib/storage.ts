@@ -98,4 +98,9 @@ export const storage = {
   async changePassword(oldPassword: string, newPassword: string): Promise<boolean> {
     return invoke("vault_change_password", { oldPassword, newPassword });
   },
+
+  /** Generate a new recovery key using the current password. Returns the new recovery key. */
+  async regenerateRecoveryKey(password: string): Promise<{ recovery_key: string }> {
+    return invoke("vault_regenerate_recovery_key", { password });
+  },
 };

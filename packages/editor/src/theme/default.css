@@ -43,6 +43,30 @@
   border-radius: 4px;
 }
 
+/* Show handle buttons on block hover */
+.cx-block-wrapper:hover > .cx-handle-buttons {
+  opacity: 1 !important;
+}
+
+.cx-handle-buttons button:hover,
+.cx-handle-buttons div[draggable]:hover {
+  background-color: var(--bg-hover) !important;
+  color: var(--text-secondary) !important;
+}
+
+/* Empty block placeholder */
+.cx-placeholder {
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--text-muted, #999);
+  pointer-events: none;
+  user-select: none;
+  font-size: 16px;
+  line-height: 1.6;
+  padding: 4px 0;
+}
+
 /* Slash command and toolbar entry animation */
 @keyframes cx-slide-in {
   from {

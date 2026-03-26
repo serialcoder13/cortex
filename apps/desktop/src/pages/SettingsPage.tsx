@@ -246,6 +246,50 @@ export function SettingsPage({ onClose }: Readonly<{ onClose?: () => void }>) {
   const [passwordStatus, setPasswordStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [changingPassword, setChangingPassword] = useState(false);
 
+  // ---- Regenerate recovery key state ----
+  const [recoveryPassword, setRecoveryPassword] = useState("");
+  const [generatingRecoveryKey, setGeneratingRecoveryKey] = useState(false);
+  const [newRecoveryKey, setNewRecoveryKey] = useState<string | null>(null);
+  const [recoveryKeyStatus, setRecoveryKeyStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [recoveryKeyCopied, setRecoveryKeyCopied] = useState(false);
+
+  const handleRegenerateRecoveryKey = useCallback(async () => {
+    if (!recoveryPassword) {
+      setRecoveryKeyStatus({ type: "error", message: "Enter your current password to confirm." });
+      return;
+    }
+    setGeneratingRecoveryKey(true);
+    setRecoveryKeyStatus(null);
+    setNewRecoveryKey(null);
+    try {
+      const result = await storage.regenerateRecoveryKey(recoveryPassword);
+      setNewRecoveryKey(result.recovery_key);
+      setRecoveryPassword("");
+    } catch (err) {
+      const tauri = err as { message?: string };
+      const msg = err instanceof Error ? err.message : tauri?.message ?? "Failed to generate recovery key";
+      setRecoveryKeyStatus({ type: "error", message: msg });
+    } finally {
+      setGeneratingRecoveryKey(false);
+    }
+  }, [recoveryPassword]);
+
+  const handleCopyRecoveryKey = useCallback(async () => {
+    if (!newRecoveryKey) return;
+    try {
+      await navigator.clipboard.writeText(newRecoveryKey);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = newRecoveryKey;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    setRecoveryKeyCopied(true);
+    setTimeout(() => setRecoveryKeyCopied(false), 2000);
+  }, [newRecoveryKey]);
+
   const handleChangePassword = useCallback(async () => {
     if (!currentPassword || !newPassword) {
       setPasswordStatus({ type: "error", message: "Please fill in all fields." });
@@ -448,57 +492,128 @@ export function SettingsPage({ onClose }: Readonly<{ onClose?: () => void }>) {
 
         <SectionDivider />
 
-        {/* Change Password */}
+        {/* Security */}
         <SectionCard title="Security">
-          <div className="space-y-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Current Password</label>
-              <input
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-                style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}
-                placeholder="Enter current password"
-              />
+          <div className="space-y-6">
+            {/* Change Password */}
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-tertiary)" }}>Change Password</p>
+              <div>
+                <label className="mb-1 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Current Password</label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+                  style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}
+                  placeholder="Enter current password"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>New Password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+                  style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}
+                  placeholder="At least 8 characters"
+                />
+                <PasswordStrengthMeter password={newPassword} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Confirm New Password</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+                  style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}
+                  placeholder="Re-enter new password"
+                />
+              </div>
+              {passwordStatus && (
+                <p className="text-xs" style={{ color: passwordStatus.type === "success" ? "var(--success)" : "var(--danger)" }}>
+                  {passwordStatus.message}
+                </p>
+              )}
+              <button
+                type="button"
+                disabled={changingPassword}
+                onClick={handleChangePassword}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
+                style={{ backgroundColor: "var(--accent)" }}
+              >
+                {changingPassword ? "Changing..." : "Change Password"}
+              </button>
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>New Password</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-                style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}
-                placeholder="At least 8 characters"
-              />
-              <PasswordStrengthMeter password={newPassword} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Confirm New Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-                style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}
-                placeholder="Re-enter new password"
-              />
-            </div>
-            {passwordStatus && (
-              <p className="text-xs" style={{ color: passwordStatus.type === "success" ? "var(--success)" : "var(--danger)" }}>
-                {passwordStatus.message}
+
+            <div style={{ borderTop: "1px solid var(--border-secondary)" }} />
+
+            {/* Regenerate Recovery Key */}
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-tertiary)" }}>Recovery Key</p>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Generate a new recovery key if your current one is lost. Your old key will immediately stop working.
               </p>
-            )}
-            <button
-              type="button"
-              disabled={changingPassword}
-              onClick={handleChangePassword}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
-              style={{ backgroundColor: "var(--accent)" }}
-            >
-              {changingPassword ? "Changing..." : "Change Password"}
-            </button>
+              {newRecoveryKey ? (
+                <div className="space-y-3">
+                  <div className="rounded-lg p-4" style={{ backgroundColor: "var(--accent-muted)", border: "1px solid var(--warning)" }}>
+                    <p className="mb-1 text-xs font-medium" style={{ color: "var(--warning)" }}>New Recovery Key — save this now</p>
+                    <p className="mb-2 text-xs" style={{ color: "var(--text-secondary)" }}>Your old key is no longer valid. This key will only be shown once.</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 break-all rounded px-3 py-2 text-xs font-mono" style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--warning)" }}>
+                        {newRecoveryKey}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={handleCopyRecoveryKey}
+                        className="flex-shrink-0 rounded-lg px-3 py-2 text-xs transition-colors hover:opacity-80"
+                        style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)" }}
+                      >
+                        {recoveryKeyCopied ? <span style={{ color: "var(--success)" }}>Copied!</span> : "Copy"}
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNewRecoveryKey(null)}
+                    className="rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90"
+                    style={{ backgroundColor: "var(--accent)" }}
+                  >
+                    I have saved my recovery key
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Confirm Current Password</label>
+                    <input
+                      type="password"
+                      value={recoveryPassword}
+                      onChange={(e) => setRecoveryPassword(e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+                      style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}
+                      placeholder="Enter current password"
+                    />
+                  </div>
+                  {recoveryKeyStatus && (
+                    <p className="text-xs" style={{ color: recoveryKeyStatus.type === "success" ? "var(--success)" : "var(--danger)" }}>
+                      {recoveryKeyStatus.message}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    disabled={generatingRecoveryKey || !recoveryPassword}
+                    onClick={handleRegenerateRecoveryKey}
+                    className="rounded-lg px-4 py-2 text-sm font-medium transition-colors hover:opacity-90 disabled:opacity-50"
+                    style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }}
+                  >
+                    {generatingRecoveryKey ? "Generating..." : "Generate New Recovery Key"}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </SectionCard>
 

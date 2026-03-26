@@ -220,9 +220,14 @@ export function VaultSetup({ onCreateVault, onOpenVault, onOpenWithRecovery, onR
     setLoading(true);
     try {
       const key = await onResetPassword(recoveryInput.trim(), newPassword);
-      setNewRecoveryKey(key);
+      if (key) {
+        setNewRecoveryKey(key);
+      } else {
+        setResetError("Failed to reset password: no recovery key returned.");
+      }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to reset password";
+      const tauri = err as { message?: string };
+      const msg = err instanceof Error ? err.message : tauri?.message ?? "Failed to reset password";
       setResetError(msg);
     } finally {
       setLoading(false);
@@ -245,7 +250,34 @@ export function VaultSetup({ onCreateVault, onOpenVault, onOpenWithRecovery, onR
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4" style={{ backgroundColor: "var(--bg-primary)" }}>
+    <>
+      {/* Modal dialog shown after successful password reset */}
+      {newRecoveryKey && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.75)" }}>
+          <div className="w-full max-w-md rounded-xl p-8" style={{ backgroundColor: "var(--bg-secondary)", border: "1px solid var(--border-secondary)" }}>
+            <h2 className="mb-2 text-lg font-bold" style={{ color: "var(--text-primary)" }}>
+              Password Reset Successfully
+            </h2>
+            <p className="mb-4 text-sm" style={{ color: "var(--text-secondary)" }}>
+              A new recovery key has been generated. Save it somewhere safe — it will only be shown once. Your old key is no longer valid.
+            </p>
+            <RecoveryKeyDisplay recoveryKey={newRecoveryKey} />
+            <p className="mt-3 text-xs" style={{ color: "var(--danger)" }}>
+              Your old recovery key is now invalid. If you lose this key, you cannot recover your vault.
+            </p>
+            <button
+              type="button"
+              onClick={onCompleteRecovery}
+              className="mt-4 w-full rounded-lg px-4 py-2.5 text-sm font-medium text-white transition-colors hover:opacity-90"
+              style={{ backgroundColor: "var(--accent)" }}
+            >
+              I have saved my recovery key
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex min-h-screen items-center justify-center p-4" style={{ backgroundColor: "var(--bg-primary)" }}>
       <div className="w-full max-w-md">
         <CortexLogo />
 
@@ -279,26 +311,7 @@ export function VaultSetup({ onCreateVault, onOpenVault, onOpenWithRecovery, onR
             </button>
           </div>
 
-          {newRecoveryKey ? (
-            /* After password reset, show the new recovery key */
-            <div className="space-y-4">
-              <p className="text-sm font-medium" style={{ color: "var(--success)" }}>
-                Password reset successfully!
-              </p>
-              <RecoveryKeyDisplay recoveryKey={newRecoveryKey} />
-              <p className="text-xs" style={{ color: "var(--danger)" }}>
-                Your old recovery key is no longer valid. Save this new key — it will only be shown once.
-              </p>
-              <button
-                type="button"
-                onClick={onCompleteRecovery}
-                className="w-full rounded-lg px-4 py-2.5 text-sm font-medium text-white transition-colors hover:opacity-90"
-                style={{ backgroundColor: "var(--accent)" }}
-              >
-                I have saved my recovery key
-              </button>
-            </div>
-          ) : recoverySuccess ? (
+          {recoverySuccess ? (
             /* After successful recovery, prompt for a new password */
             <form onSubmit={handleSetNewPassword} className="space-y-4">
               <p className="text-sm" style={{ color: "var(--success)" }}>
@@ -460,6 +473,7 @@ export function VaultSetup({ onCreateVault, onOpenVault, onOpenWithRecovery, onR
           )}
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }

@@ -76,7 +76,8 @@
       "Bash(md5 \"/Users/kirangrandhi/kiran/cortex/apps/desktop/src-tauri/icons/icon.png\")",
       "Bash(sips -z 256 256 \"roundedcorner.png\" --out apps/desktop/src-tauri/icons/256x256.png)",
       "Bash(sips -z 512 512 \"roundedcorner.png\" --out apps/desktop/src-tauri/icons/512x512.png)",
-      "Bash(wc -l /Users/kirangrandhi/kiran/cortex/packages/editor/src/**/*.ts /Users/kirangrandhi/kiran/cortex/packages/editor/src/**/*.tsx)"
+      "Bash(wc -l /Users/kirangrandhi/kiran/cortex/packages/editor/src/**/*.ts /Users/kirangrandhi/kiran/cortex/packages/editor/src/**/*.tsx)",
+      "Bash(pnpm tsc:*)"
     ],
     "additionalDirectories": [
       "/Users/kirangrandhi/Library/Caches/com.cortex.app"

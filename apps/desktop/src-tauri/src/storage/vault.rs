@@ -132,6 +132,21 @@ pub fn reset_password_with_recovery(
     Ok(new_recovery_key)
 }
 
+/// Regenerate the vault recovery key using the current password. Returns the new recovery key.
+pub fn regenerate_recovery_key(path: &str, password: &str) -> Result<String, StorageError> {
+    let keys = read_vault_keys(path)?;
+
+    let (new_keys, new_recovery_key) = crypto::regenerate_recovery_key(password, &keys)
+        .map_err(|e| StorageError::Encryption(e.to_string()))?;
+
+    let keys_json = serde_json::to_string_pretty(&new_keys)
+        .map_err(|e| StorageError::Serialization(e.to_string()))?;
+    let keys_path = Path::new(path).join(CORTEX_DIR).join(KEYS_FILE);
+    fs::write(keys_path, keys_json)?;
+
+    Ok(new_recovery_key)
+}
+
 /// Check whether a vault exists at the given path by looking for `.cortex/keys.json`.
 pub fn vault_exists(path: &str) -> bool {
     Path::new(path).join(CORTEX_DIR).join(KEYS_FILE).exists()

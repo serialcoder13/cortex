@@ -273,6 +273,40 @@ pub fn decrypt_file(master_key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, Cry
     aes_decrypt(&key, &nonce_bytes, &ciphertext[NONCE_SIZE..])
 }
 
+/// Regenerate the vault recovery key using the current password.
+///
+/// Verifies the password by decrypting the master key, then generates a
+/// fresh recovery key and re-encrypts the master key with it. Returns
+/// updated [`VaultKeys`] and the new base64-encoded recovery key.
+pub fn regenerate_recovery_key(
+    password: &str,
+    keys: &VaultKeys,
+) -> Result<(VaultKeys, String), CryptoError> {
+    // 1. Unlock master key with current password.
+    let master_key = unlock_vault(password, keys)?;
+
+    // 2. Generate a new recovery key.
+    let new_recovery_key = random_bytes(KEY_SIZE);
+    let new_recovery_key_arr: [u8; KEY_SIZE] = new_recovery_key
+        .clone()
+        .try_into()
+        .expect("recovery key is exactly 32 bytes");
+
+    // 3. Encrypt master key with the new recovery key.
+    let recovery_nonce: [u8; NONCE_SIZE] = random_bytes(NONCE_SIZE)
+        .try_into()
+        .expect("nonce is exactly 12 bytes");
+    let new_encrypted_master_recovery = aes_encrypt(&new_recovery_key_arr, &recovery_nonce, &master_key)?;
+
+    let new_keys = VaultKeys {
+        encrypted_master_key_recovery: BASE64.encode(&new_encrypted_master_recovery),
+        recovery_key_nonce: BASE64.encode(recovery_nonce),
+        ..keys.clone()
+    };
+
+    Ok((new_keys, BASE64.encode(&new_recovery_key)))
+}
+
 /// Change the vault password.
 ///
 /// Decrypts the master key with the old password, generates a new salt,

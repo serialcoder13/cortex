@@ -111,6 +111,24 @@ pub fn vault_reset_password_with_recovery(
     Ok(ResetPasswordResult { recovery_key: new_recovery_key })
 }
 
+#[derive(Serialize)]
+pub struct RegenerateRecoveryKeyResult {
+    recovery_key: String,
+}
+
+#[tauri::command]
+pub fn vault_regenerate_recovery_key(
+    password: String,
+    state: State<'_, VaultState>,
+) -> CmdResult<RegenerateRecoveryKeyResult> {
+    let vault_path = state.vault_path.lock().unwrap().clone()
+        .ok_or_else(|| CommandError { message: "Vault not open".into() })?;
+
+    let new_recovery_key = vault::regenerate_recovery_key(&vault_path, &password)
+        .map_err(CommandError::from)?;
+    Ok(RegenerateRecoveryKeyResult { recovery_key: new_recovery_key })
+}
+
 #[tauri::command]
 pub fn vault_change_password(
     old_password: String,

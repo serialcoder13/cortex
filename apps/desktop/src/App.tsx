@@ -12,11 +12,31 @@ import { useTheme } from "./lib/hooks/useTheme";
 import { storage } from "./lib/storage";
 import { useTabStore } from "./stores/tabs";
 
+const SIDEBAR_VIEWS = new Set<ActivityView>(["calendar", "documents"]);
+
+function readSidebarOpen(): boolean {
+  try { return localStorage.getItem("cortex-sidebar-open") !== "false"; } catch { return true; }
+}
+
+function readSidebarWidth(): number {
+  try { return Number.parseInt(localStorage.getItem("cortex-sidebar-width") ?? "240", 10); } catch { return 240; }
+}
+
+function saveSidebarOpen(open: boolean) {
+  try { localStorage.setItem("cortex-sidebar-open", String(open)); } catch { /* ignore */ }
+}
+
+function saveSidebarWidth(width: number) {
+  try { localStorage.setItem("cortex-sidebar-width", String(width)); } catch { /* ignore */ }
+}
+
 function App() {
   const vault = useVault();
   useTheme();
   const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<ActivityView>("calendar");
+  const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen);
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
 
   const tabs = useTabStore((s) => s.tabs);
   const activeTabId = useTabStore((s) => s.activeTabId);
@@ -35,6 +55,43 @@ function App() {
     globalThis.addEventListener("keydown", handleKeyDown);
     return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, [closeTab]);
+
+  // Cmd+B to toggle sidebar.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "b") {
+        e.preventDefault();
+        setSidebarOpen((prev) => {
+          saveSidebarOpen(!prev);
+          return !prev;
+        });
+      }
+    };
+    globalThis.addEventListener("keydown", handleKeyDown);
+    return () => globalThis.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const handleViewChange = useCallback((view: ActivityView) => {
+    if (view === activeView && SIDEBAR_VIEWS.has(view)) {
+      // Clicking the active sidebar view toggles the sidebar.
+      setSidebarOpen((prev) => {
+        saveSidebarOpen(!prev);
+        return !prev;
+      });
+    } else {
+      setActiveView(view);
+      // Opening a sidebar view always reveals the sidebar.
+      if (SIDEBAR_VIEWS.has(view)) {
+        setSidebarOpen(true);
+        saveSidebarOpen(true);
+      }
+    }
+  }, [activeView]);
+
+  const handleWidthChange = useCallback((w: number) => {
+    setSidebarWidth(w);
+    saveSidebarWidth(w);
+  }, []);
 
   const handleCreateVault = useCallback(
     async (path: string, password: string) => {
@@ -127,23 +184,25 @@ function App() {
     );
   }
 
-  // Show sidebar for calendar and documents views.
-  const showSidebar = activeView === "calendar" || activeView === "documents";
+  const showSidebar = SIDEBAR_VIEWS.has(activeView) && sidebarOpen;
+
+  let mainContent: React.ReactNode;
+  if (activeView === "settings") {
+    mainContent = <SettingsPage onClose={() => setActiveView("calendar")} />;
+  } else if (activeTab?.path) {
+    mainContent = <DocumentPage key={activeTab.id} path={activeTab.path} />;
+  } else {
+    mainContent = <EmptyState />;
+  }
 
   return (
     <div className="flex h-screen" style={{ backgroundColor: "var(--bg-primary)", color: "var(--text-primary)" }}>
-      <ActivityBar activeView={activeView} onViewChange={setActiveView} onCloseVault={vault.lockVault} />
-      {showSidebar && <FileTree view={activeView} />}
+      <ActivityBar activeView={activeView} onViewChange={handleViewChange} onCloseVault={vault.lockVault} />
+      {showSidebar && <FileTree view={activeView} width={sidebarWidth} onWidthChange={handleWidthChange} />}
       <div className="flex-1 flex flex-col min-w-0">
         {activeView !== "settings" && <TabBar />}
         <div className="flex-1 overflow-hidden">
-          {activeView === "settings" ? (
-            <SettingsPage onClose={() => setActiveView("calendar")} />
-          ) : activeTab?.path ? (
-            <DocumentPage key={activeTab.id} path={activeTab.path} />
-          ) : (
-            <EmptyState />
-          )}
+          {mainContent}
         </div>
       </div>
     </div>

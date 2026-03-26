@@ -688,17 +688,55 @@ function VaultBottomBar() {
 // Sidebar shell
 // ---------------------------------------------------------------------------
 
-function SidebarShell({ children }: { children: React.ReactNode }) {
+function SidebarShell({ children, width, onWidthChange }: Readonly<{ children: React.ReactNode; width: number; onWidthChange: (w: number) => void }>) {
+  const isResizing = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    isResizing.current = true;
+    startX.current = e.clientX;
+    startWidth.current = width;
+    e.preventDefault();
+  }, [width]);
+
+  useEffect(() => {
+    function handleMouseMove(e: MouseEvent) {
+      if (!isResizing.current) return;
+      const delta = e.clientX - startX.current;
+      const newWidth = Math.max(160, Math.min(560, startWidth.current + delta));
+      onWidthChange(newWidth);
+    }
+    function handleMouseUp() {
+      isResizing.current = false;
+    }
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [onWidthChange]);
+
   return (
     <aside
-      className="w-60 flex flex-col flex-shrink-0 overflow-hidden"
+      className="flex flex-col flex-shrink-0 overflow-hidden relative"
       style={{
+        width: `${width}px`,
         backgroundColor: "var(--bg-secondary)",
         borderRight: "1px solid var(--border-primary)",
       }}
     >
       {children}
       <VaultBottomBar />
+      {/* Resize handle */}
+      <button
+        type="button"
+        aria-label="Resize sidebar"
+        className="absolute top-0 right-0 w-1 h-full z-10 p-0 border-none bg-transparent"
+        style={{ cursor: "col-resize" }}
+        onMouseDown={handleMouseDown}
+      />
     </aside>
   );
 }
@@ -707,7 +745,7 @@ function SidebarShell({ children }: { children: React.ReactNode }) {
 // FileTree Component (accepts view to switch layout)
 // ---------------------------------------------------------------------------
 
-export function FileTree({ view = "calendar" }: { view?: ActivityView }) {
+export function FileTree({ view = "calendar", width = 240, onWidthChange }: Readonly<{ view?: ActivityView; width?: number; onWidthChange?: (w: number) => void }>) {
   const [docs, setDocs] = useState<DocumentMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -946,10 +984,12 @@ export function FileTree({ view = "calendar" }: { view?: ActivityView }) {
     }
   }, [refreshDocs]);
 
+  const safeOnWidthChange = onWidthChange ?? (() => {});
+
   // ---- Calendar view: calendar at top, no file browser ----
   if (view === "calendar") {
     return (
-      <SidebarShell>
+      <SidebarShell width={width} onWidthChange={safeOnWidthChange}>
         <MiniCalendar existingPaths={existingPaths} />
         <div style={{ borderTop: "1px solid var(--border-primary)" }} />
         <div className="flex-1" />
@@ -959,7 +999,7 @@ export function FileTree({ view = "calendar" }: { view?: ActivityView }) {
 
   // ---- Documents view: search + toolbar + file tree ----
   return (
-    <SidebarShell>
+    <SidebarShell width={width} onWidthChange={safeOnWidthChange}>
       {/* Search + action buttons */}
       <div className="px-2 pt-2 pb-1 flex items-center gap-1">
         <div className="relative flex-1">
