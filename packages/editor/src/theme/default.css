@@ -19,6 +19,12 @@
   position: relative;
 }
 
+/* Preserve whitespace so trailing/consecutive spaces are not collapsed by the browser */
+.cx-editor [data-content] {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
 .cx-editor a {
   color: var(--accent, #60a5fa);
   text-decoration: underline;

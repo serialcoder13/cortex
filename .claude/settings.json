@@ -77,7 +77,11 @@
       "Bash(sips -z 256 256 \"roundedcorner.png\" --out apps/desktop/src-tauri/icons/256x256.png)",
       "Bash(sips -z 512 512 \"roundedcorner.png\" --out apps/desktop/src-tauri/icons/512x512.png)",
       "Bash(wc -l /Users/kirangrandhi/kiran/cortex/packages/editor/src/**/*.ts /Users/kirangrandhi/kiran/cortex/packages/editor/src/**/*.tsx)",
-      "Bash(pnpm tsc:*)"
+      "Bash(pnpm tsc:*)",
+      "Bash(xargs -I {} find {} -type f \\\\\\( -name \"*.tsx\" -o -name \"*.ts\" \\\\\\))",
+      "Bash(grep -E \"^\\\\.|\\\\.tsx$|\\\\.ts$\")",
+      "Bash(npx playwright:*)",
+      "Bash(PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium)"
     ],
     "additionalDirectories": [
       "/Users/kirangrandhi/Library/Caches/com.cortex.app"

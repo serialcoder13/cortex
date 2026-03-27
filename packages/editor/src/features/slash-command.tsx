@@ -149,6 +149,7 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
   return (
     <div
       ref={menuRef}
+      data-testid="slash-command-menu"
       className="cx-fixed cx-z-50 cx-max-h-[340px] cx-w-72 cx-overflow-y-auto cx-rounded-lg cx-py-1 cx-menu-enter"
       style={{
         ...menuStyle,

@@ -49,10 +49,7 @@ export function writeSelection(root: HTMLElement, sel: Selection): void {
     } else if (
       sel.anchor.blockId === sel.focus.blockId
         ? sel.anchor.offset <= sel.focus.offset
-        : findBlockIndex(
-            { blocks: [], version: 0 },
-            sel.anchor.blockId,
-          ) <= findBlockIndex({ blocks: [], version: 0 }, sel.focus.blockId)
+        : compareBlockOrder(root, sel.anchor.blockId, sel.focus.blockId) <= 0
     ) {
       // Forward selection
       domSel.addRange(range);
@@ -196,6 +193,18 @@ function findDomPosition(
   }
 
   return { node: container, offset: 0 };
+}
+
+/** Compare the DOM order of two blocks by their data-block-id attributes.
+ *  Returns negative if a is before b, 0 if same, positive if a is after b. */
+function compareBlockOrder(root: HTMLElement, blockIdA: string, blockIdB: string): number {
+  const elA = root.querySelector(`[${BLOCK_ATTR}="${blockIdA}"]`);
+  const elB = root.querySelector(`[${BLOCK_ATTR}="${blockIdB}"]`);
+  if (!elA || !elB) return 0;
+  const pos = elA.compareDocumentPosition(elB);
+  if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1; // A before B
+  if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;  // A after B
+  return 0;
 }
 
 /** Get the last text node in a subtree */

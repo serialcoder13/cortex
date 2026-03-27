@@ -300,7 +300,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         if (!result.doc || result.doc === docRef.current) return;
 
         if (recordHistory && result.ops.length > 0) {
-          historyRef.current.push(result.ops, selection, result.selection);
+          historyRef.current.push(result.ops, selectionRef.current, result.selection);
         }
 
         setDoc(result.doc);
@@ -308,12 +308,13 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
 
         if (result.selection) {
           setSelection(result.selection);
+          selectionRef.current = result.selection;
         }
 
         onChange?.(result.doc);
         resetIdleTimer();
       },
-      [onChange, selection, resetIdleTimer],
+      [onChange, resetIdleTimer],
     );
 
     useEffect(() => {
@@ -323,16 +324,14 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
     }, []);
 
     // ---- Sync selection to DOM after render ----
+    // This runs synchronously after React commits to the DOM.
+    // No rAF needed — the DOM is already updated at this point.
+    // Using rAF would create a race with user-initiated selection changes.
     useEffect(() => {
       if (!rootRef.current || !selection) return;
-
-      // Use requestAnimationFrame to ensure DOM is updated
-      const frame = requestAnimationFrame(() => {
-        if (rootRef.current && selection) {
-          writeSelection(rootRef.current, selection);
-        }
-      });
-      return () => cancelAnimationFrame(frame);
+      isWritingSelection.current = true;
+      writeSelection(rootRef.current, selection);
+      isWritingSelection.current = false;
     }, [selection, doc.version]);
 
     // ---- Slash Command Helpers ----
@@ -580,24 +579,39 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
 
     // ---- Event Handlers ----
 
+    // Guard flag to prevent selectionchange → writeSelection → selectionchange loop
+    const isWritingSelection = useRef(false);
+
     const handleSelectionChange = useCallback(() => {
-      if (isComposing.current || !rootRef.current) return;
+      if (isComposing.current || !rootRef.current || isWritingSelection.current) return;
 
       const domSel = window.getSelection();
       if (!domSel || !rootRef.current.contains(domSel.anchorNode)) return;
 
-      const sel = readSelection(rootRef.current, doc);
+      const sel = readSelection(rootRef.current, docRef.current);
       if (sel) {
+        // Skip update if selection hasn't changed (prevents loops)
+        const prev = selectionRef.current;
+        if (
+          prev &&
+          prev.anchor.blockId === sel.anchor.blockId &&
+          prev.anchor.offset === sel.anchor.offset &&
+          prev.focus.blockId === sel.focus.blockId &&
+          prev.focus.offset === sel.focus.offset
+        ) {
+          return;
+        }
+
         setSelection(sel);
+        selectionRef.current = sel;
 
         // Update slash command and toolbar states
-        // Use a microtask to ensure DOM is settled
         requestAnimationFrame(() => {
           updateSlashCommandState(docRef.current, sel);
           updateToolbarState(docRef.current, sel);
         });
       }
-    }, [doc, updateSlashCommandState, updateToolbarState]);
+    }, [updateSlashCommandState, updateToolbarState]);
 
     useEffect(() => {
       document.addEventListener("selectionchange", handleSelectionChange);
@@ -628,14 +642,19 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           return;
         }
 
+        const currentDoc = docRef.current;
+
         // Undo: Cmd+Z
         if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "z") {
           e.preventDefault();
-          const result = historyRef.current.undo(doc);
+          const result = historyRef.current.undo(currentDoc);
           if (result) {
             setDoc(result.doc);
             docRef.current = result.doc;
-            if (result.selection) setSelection(result.selection);
+            if (result.selection) {
+              setSelection(result.selection);
+              selectionRef.current = result.selection;
+            }
             onChange?.(result.doc);
           }
           return;
@@ -647,37 +666,52 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           ((e.metaKey || e.ctrlKey) && e.key === "y")
         ) {
           e.preventDefault();
-          const result = historyRef.current.redo(doc);
+          const result = historyRef.current.redo(currentDoc);
           if (result) {
             setDoc(result.doc);
             docRef.current = result.doc;
-            if (result.selection) setSelection(result.selection);
+            if (result.selection) {
+              setSelection(result.selection);
+              selectionRef.current = result.selection;
+            }
             onChange?.(result.doc);
           }
           return;
         }
 
-        if (!selection) return;
+        const sel = selectionRef.current;
+        if (!sel) return;
 
-        const { result, handled } = handleKeyDown({ doc, selection }, e.nativeEvent);
+        const { result, handled } = handleKeyDown({ doc: currentDoc, selection: sel }, e.nativeEvent);
         if (handled && result.doc) {
           apply(result);
         }
       },
-      [doc, selection, readOnly, apply, onChange, slashCommand.active, toolbar.active, handleToolbarClose],
+      [readOnly, apply, onChange, slashCommand.active, toolbar.active, handleToolbarClose],
     );
 
-    const onBeforeInput = useCallback(
-      (e: React.FormEvent) => {
-        if (readOnly || isComposing.current || !selection) return;
+    // ---- Native beforeinput listener ----
+    // React 19's onBeforeInput is a polyfilled event that does NOT reliably
+    // map to the native `beforeinput` event. We must use a native listener
+    // to intercept and preventDefault on text input.
+    useEffect(() => {
+      const root = rootRef.current;
+      if (!root || readOnly) return;
 
-        const inputEvent = e.nativeEvent as InputEvent;
-        const { result, handled } = handleBeforeInput({ doc, selection }, inputEvent);
+      const onNativeBeforeInput = (e: Event) => {
+        if (isComposing.current) return;
+        const sel = selectionRef.current;
+        if (!sel) return;
+
+        const inputEvent = e as InputEvent;
+        const { result, handled } = handleBeforeInput(
+          { doc: docRef.current, selection: sel },
+          inputEvent,
+        );
         if (handled && result.doc) {
           apply(result);
 
           // After applying, check for slash command trigger
-          // We schedule this to run after the state update
           requestAnimationFrame(() => {
             const currentSel = selectionRef.current;
             if (currentSel) {
@@ -685,9 +719,11 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
             }
           });
         }
-      },
-      [doc, selection, readOnly, apply, updateSlashCommandState],
-    );
+      };
+
+      root.addEventListener("beforeinput", onNativeBeforeInput);
+      return () => root.removeEventListener("beforeinput", onNativeBeforeInput);
+    }, [readOnly, apply, updateSlashCommandState]);
 
     const onCompositionStart = useCallback(() => {
       isComposing.current = true;
@@ -735,28 +771,31 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
 
     const onCopy = useCallback(
       (e: React.ClipboardEvent) => {
-        if (!selection) return;
-        handleCopy(doc, selection, e.nativeEvent);
+        const sel = selectionRef.current;
+        if (!sel) return;
+        handleCopy(docRef.current, sel, e.nativeEvent);
       },
-      [doc, selection],
+      [],
     );
 
     const onCut = useCallback(
       (e: React.ClipboardEvent) => {
-        if (readOnly || !selection) return;
-        const result = handleCut(doc, selection, e.nativeEvent);
+        const sel = selectionRef.current;
+        if (readOnly || !sel) return;
+        const result = handleCut(docRef.current, sel, e.nativeEvent);
         if (result) apply(result);
       },
-      [doc, selection, readOnly, apply],
+      [readOnly, apply],
     );
 
     const onPaste = useCallback(
       (e: React.ClipboardEvent) => {
-        if (readOnly || !selection) return;
-        const result = handlePaste(doc, selection, e.nativeEvent);
+        const sel = selectionRef.current;
+        if (readOnly || !sel) return;
+        const result = handlePaste(docRef.current, sel, e.nativeEvent);
         if (result) apply(result);
       },
-      [doc, selection, readOnly, apply],
+      [readOnly, apply],
     );
 
     const onEditorBlur = useCallback(() => {
@@ -898,7 +937,6 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           aria-multiline="true"
           aria-placeholder={placeholder}
           onKeyDown={onKeyDown}
-          onBeforeInput={onBeforeInput}
           onCompositionStart={onCompositionStart}
           onCompositionEnd={onCompositionEnd}
           onCopy={onCopy}
