@@ -7,31 +7,69 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { BlockType } from "../core/types";
 import { blockDefinitions, type BlockDefinition } from "../blocks/registry";
+import {
+  Type,
+  Heading1,
+  Heading2,
+  Heading3,
+  List,
+  ListOrdered,
+  CheckSquare,
+  Code,
+  Quote,
+  Lightbulb,
+  ChevronRight,
+  Minus,
+  Image,
+  Link,
+  Table,
+  GitGraph,
+  Component,
+} from "lucide-react";
 
 interface SlashCommandProps {
-  /** Screen position where the menu should appear */
   position: { x: number; y: number };
-  /** Current filter text (characters typed after "/") */
   filter: string;
-  /** Called when a block type is selected */
   onSelect: (type: BlockType) => void;
-  /** Called when the menu should close */
   onClose: () => void;
 }
 
-// Group definitions by category for display
 const CATEGORIES: { label: string; types: BlockType[] }[] = [
   { label: "Basic", types: ["paragraph", "heading1", "heading2", "heading3"] },
   { label: "Lists", types: ["bulletList", "numberedList", "todo"] },
-  { label: "Advanced", types: ["codeBlock", "quote", "callout", "toggle"] },
-  { label: "Media", types: ["divider", "image", "embed", "table"] },
+  { label: "Advanced", types: ["codeBlock", "quote", "callout", "toggle", "customComponent"] },
+  { label: "Media", types: ["divider", "image", "embed", "table", "mermaid"] },
 ];
+
+const ICON_SIZE = 16;
+
+function getBlockIcon(type: BlockType): React.ReactNode {
+  const icons: Record<string, React.ReactNode> = {
+    paragraph: <Type size={ICON_SIZE} />,
+    heading1: <Heading1 size={ICON_SIZE} />,
+    heading2: <Heading2 size={ICON_SIZE} />,
+    heading3: <Heading3 size={ICON_SIZE} />,
+    bulletList: <List size={ICON_SIZE} />,
+    numberedList: <ListOrdered size={ICON_SIZE} />,
+    todo: <CheckSquare size={ICON_SIZE} />,
+    codeBlock: <Code size={ICON_SIZE} />,
+    quote: <Quote size={ICON_SIZE} />,
+    callout: <Lightbulb size={ICON_SIZE} />,
+    toggle: <ChevronRight size={ICON_SIZE} />,
+    divider: <Minus size={ICON_SIZE} />,
+    image: <Image size={ICON_SIZE} />,
+    embed: <Link size={ICON_SIZE} />,
+    table: <Table size={ICON_SIZE} />,
+    mermaid: <GitGraph size={ICON_SIZE} />,
+    customComponent: <Component size={ICON_SIZE} />,
+  };
+  return icons[type] ?? <Type size={ICON_SIZE} />;
+}
 
 export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashCommandProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Filter block definitions based on input
   const filtered = useMemo(() => {
     if (!filter) return blockDefinitions;
     const lower = filter.toLowerCase();
@@ -43,10 +81,8 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
     );
   }, [filter]);
 
-  // Group filtered items by category
   const grouped = useMemo(() => {
     if (filter) {
-      // When filtering, show flat list
       return [{ label: "Results", items: filtered }];
     }
     return CATEGORIES.map((cat) => ({
@@ -57,13 +93,9 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
     })).filter((g) => g.items.length > 0);
   }, [filtered, filter]);
 
-  // Flat list for keyboard nav
   const flatItems = useMemo(() => grouped.flatMap((g) => g.items), [grouped]);
 
-  // Reset selection when filter changes
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [filter]);
+  useEffect(() => { setSelectedIndex(0); }, [filter]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -71,25 +103,28 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
+          e.stopImmediatePropagation();
           setSelectedIndex((i) => (i + 1) % flatItems.length);
           break;
         case "ArrowUp":
           e.preventDefault();
+          e.stopImmediatePropagation();
           setSelectedIndex((i) => (i - 1 + flatItems.length) % flatItems.length);
           break;
         case "Enter": {
           e.preventDefault();
+          e.stopImmediatePropagation();
           const item = flatItems[selectedIndex];
           if (item) onSelect(item.type);
           break;
         }
         case "Escape":
           e.preventDefault();
+          e.stopImmediatePropagation();
           onClose();
           break;
       }
     }
-
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [flatItems, selectedIndex, onSelect, onClose]);
@@ -105,20 +140,20 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
     return () => document.removeEventListener("mousedown", handleClick);
   }, [onClose]);
 
-  // Scroll selected item into view
+  // Scroll selected into view
   useEffect(() => {
-    const selected = menuRef.current?.querySelector("[data-selected=true]");
-    selected?.scrollIntoView({ block: "nearest" });
+    const el = menuRef.current?.querySelector("[data-selected=true]");
+    el?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
-  // Compute position, flipping upward if near bottom of viewport
-  const menuStyle = useMemo(() => {
-    const maxHeight = 340;
-    const flipUp = position.y + maxHeight > window.innerHeight - 20;
+  const menuPos = useMemo(() => {
+    const flipUp = position.y + 340 > globalThis.innerHeight - 20;
     return {
+      position: "fixed" as const,
       left: position.x,
       top: flipUp ? undefined : position.y,
-      bottom: flipUp ? window.innerHeight - position.y + 8 : undefined,
+      bottom: flipUp ? globalThis.innerHeight - position.y + 8 : undefined,
+      zIndex: 50,
     };
   }, [position]);
 
@@ -126,18 +161,17 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
     return (
       <div
         ref={menuRef}
-        className="cx-fixed cx-z-50 cx-w-72 cx-rounded-lg cx-p-2 cx-menu-enter"
         style={{
-          ...menuStyle,
-          backgroundColor: "var(--bg-secondary)",
-          border: "1px solid var(--border-primary)",
-          boxShadow: "0 4px 16px var(--shadow)",
+          ...menuPos,
+          width: 240,
+          borderRadius: 10,
+          padding: 8,
+          backgroundColor: "var(--bg-secondary, #f5f5f5)",
+          border: "1px solid var(--border-primary, #e5e5e5)",
+          boxShadow: "0 4px 20px var(--shadow, rgba(0,0,0,0.12))",
         }}
       >
-        <p
-          className="cx-px-2 cx-py-3 cx-text-center cx-text-sm"
-          style={{ color: "var(--text-muted)" }}
-        >
+        <p style={{ padding: "12px 8px", textAlign: "center", fontSize: 13, color: "var(--text-muted, #999)", margin: 0 }}>
           No matching blocks
         </p>
       </div>
@@ -150,22 +184,35 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
     <div
       ref={menuRef}
       data-testid="slash-command-menu"
-      className="cx-fixed cx-z-50 cx-max-h-[340px] cx-w-72 cx-overflow-y-auto cx-rounded-lg cx-py-1 cx-menu-enter"
       style={{
-        ...menuStyle,
-        backgroundColor: "var(--bg-secondary)",
-        border: "1px solid var(--border-primary)",
-        boxShadow: "0 4px 16px var(--shadow)",
+        ...menuPos,
+        width: 240,
+        maxHeight: 340,
+        overflowY: "auto",
+        borderRadius: 10,
+        padding: "4px 0",
+        backgroundColor: "var(--bg-secondary, #f5f5f5)",
+        border: "1px solid var(--border-primary, #e5e5e5)",
+        boxShadow: "0 4px 20px var(--shadow, rgba(0,0,0,0.12))",
       }}
     >
       {grouped.map((group) => (
         <div key={group.label}>
+          {/* Category label */}
           <div
-            className="cx-px-3 cx-py-1.5 cx-text-[11px] cx-font-medium cx-uppercase cx-tracking-wider"
-            style={{ color: "var(--text-muted)" }}
+            style={{
+              padding: "8px 12px 4px",
+              fontSize: 10,
+              fontWeight: 500,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              color: "var(--text-muted, #999)",
+              opacity: 0.8,
+            }}
           >
             {group.label}
           </div>
+          {/* Items */}
           {group.items.map((def) => {
             const idx = flatIndex++;
             const isSelected = idx === selectedIndex;
@@ -174,39 +221,61 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
                 key={def.type}
                 type="button"
                 data-selected={isSelected}
-                className="cx-flex cx-w-full cx-items-center cx-gap-3 cx-px-3 cx-py-2 cx-text-left cx-transition-colors cx-rounded-md cx-mx-0"
-                style={{
-                  backgroundColor: isSelected ? "var(--bg-tertiary)" : "transparent",
-                  color: isSelected ? "var(--text-primary)" : "var(--text-secondary)",
-                }}
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => onSelect(def.type)}
                 onMouseEnter={() => setSelectedIndex(idx)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  width: "100%",
+                  padding: "6px 10px",
+                  margin: "0 2px",
+                  border: "none",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  textAlign: "left",
+                  backgroundColor: isSelected ? "var(--bg-tertiary, #eee)" : "transparent",
+                  color: isSelected ? "var(--text-primary, #1a1a1a)" : "var(--text-secondary, #4a4a4a)",
+                  transition: "background-color 80ms",
+                  fontFamily: "inherit",
+                  fontSize: 13,
+                  boxSizing: "border-box",
+                }}
               >
+                {/* Icon */}
                 <span
-                  className="cx-flex cx-h-9 cx-w-9 cx-items-center cx-justify-center cx-rounded-md cx-text-sm cx-flex-shrink-0"
                   style={{
-                    backgroundColor: "var(--bg-tertiary)",
-                    color: "var(--text-primary)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 28,
+                    height: 28,
+                    borderRadius: 6,
+                    backgroundColor: "var(--bg-tertiary, #eee)",
+                    color: "var(--text-primary, #1a1a1a)",
+                    flexShrink: 0,
                   }}
                 >
                   {getBlockIcon(def.type)}
                 </span>
-                <div className="cx-flex-1 cx-min-w-0">
-                  <div className="cx-text-sm cx-font-medium" style={{ color: "var(--text-primary)" }}>
+                {/* Label + description */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 500, fontSize: 13, color: "var(--text-primary, #1a1a1a)" }}>
                     {def.label}
                   </div>
-                  <div className="cx-text-xs" style={{ color: "var(--text-muted)" }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-muted, #999)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
                     {def.description}
                   </div>
                 </div>
-                {def.shortcut && (
-                  <span
-                    className="cx-text-[11px] cx-font-mono cx-flex-shrink-0"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    {def.shortcut}
-                  </span>
-                )}
               </button>
             );
           })}
@@ -214,25 +283,4 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
       ))}
     </div>
   );
-}
-
-function getBlockIcon(type: BlockType): string {
-  const icons: Record<string, string> = {
-    paragraph: "T",
-    heading1: "H1",
-    heading2: "H2",
-    heading3: "H3",
-    bulletList: "•",
-    numberedList: "1.",
-    todo: "☐",
-    codeBlock: "<>",
-    quote: "❝",
-    callout: "💡",
-    toggle: "▶",
-    divider: "—",
-    image: "🖼",
-    embed: "🔗",
-    table: "⊞",
-  };
-  return icons[type] ?? "¶";
 }

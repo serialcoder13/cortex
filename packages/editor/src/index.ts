@@ -29,6 +29,19 @@ export { SlashCommandMenu } from "./features/slash-command";
 // Floating toolbar
 export { FloatingToolbar } from "./features/toolbar";
 
+// Find & Replace
+export { FindReplaceBar, findInDocument } from "./features/find-replace";
+export type { FindMatch, FindReplaceProps } from "./features/find-replace";
+
+// Custom component registration (plugin system for custom block types)
+export {
+  registerComponent,
+  unregisterComponent,
+  getRegisteredComponent,
+  getAllRegisteredComponents,
+} from "./blocks/component-registry";
+export type { CustomComponentDefinition, CustomComponentRenderProps } from "./blocks/component-registry";
+
 // Markdown serialization
 export { blocksToMarkdown, markdownToBlocks } from "./markdown";
 export { parseFrontmatter, stringifyFrontmatter } from "./markdown";

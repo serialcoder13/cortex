@@ -5,6 +5,7 @@
 
 import type { Block, TextSpan, Mark, BlockType, BlockProps } from "../core/types";
 import { generateId } from "../core/types";
+import { detectCustomComponentMarker, isCustomComponentEndMarker, deserializeCustomComponent } from "../blocks/component-registry";
 
 /**
  * Convert a markdown string (without frontmatter) into an array of Blocks.
@@ -19,9 +20,39 @@ export function markdownToBlocks(markdown: string): Block[] {
 
     // --- Code block (fenced) ---
     if (line.trimStart().startsWith("```")) {
+      const langHint = line.trimStart().slice(3).trim();
+      if (langHint === "mermaid") {
+        const result = parseMermaidBlock(lines, i);
+        blocks.push(result.block);
+        i = result.nextIndex;
+        continue;
+      }
       const result = parseCodeBlock(lines, i);
       blocks.push(result.block);
       i = result.nextIndex;
+      continue;
+    }
+
+    // --- Table: lines starting with | ---
+    if (line.trimStart().startsWith("|")) {
+      const result = parseTable(lines, i);
+      blocks.push(result.block);
+      i = result.nextIndex;
+      continue;
+    }
+
+    // --- Custom component (<!-- cortex:name --> ... <!-- /cortex:name -->) ---
+    const componentName = detectCustomComponentMarker(line);
+    if (componentName) {
+      const contentLines: string[] = [];
+      i++;
+      while (i < lines.length && !isCustomComponentEndMarker(lines[i], componentName)) {
+        contentLines.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++; // skip end marker
+      const props = deserializeCustomComponent(componentName, contentLines.join("\n"));
+      blocks.push(makeBlock("customComponent", [], props));
       continue;
     }
 
@@ -163,7 +194,8 @@ export function markdownToBlocks(markdown: string): Block[] {
         /^(-{3,}|\*{3,})$/.test(nextLine.trim()) ||
         nextLine.match(/^!\[/) ||
         nextLine.match(/^\[embed\]/) ||
-        nextLine.trim() === "<details>"
+        nextLine.trim() === "<details>" ||
+        nextLine.trimStart().startsWith("|")
       ) {
         break;
       }
@@ -177,6 +209,65 @@ export function markdownToBlocks(markdown: string): Block[] {
   }
 
   return blocks;
+}
+
+// ---- Mermaid block parsing ----
+
+function parseMermaidBlock(
+  lines: string[],
+  startIndex: number,
+): { block: Block; nextIndex: number } {
+  const codeLines: string[] = [];
+  let i = startIndex + 1; // Skip opening ```mermaid
+  while (i < lines.length) {
+    if (lines[i].trimStart().startsWith("```")) {
+      i++; // Skip closing ```
+      break;
+    }
+    codeLines.push(lines[i]);
+    i++;
+  }
+
+  return {
+    block: makeBlock("mermaid", [], { mermaidCode: codeLines.join("\n") }),
+    nextIndex: i,
+  };
+}
+
+// ---- Table parsing ----
+
+function parseTable(
+  lines: string[],
+  startIndex: number,
+): { block: Block; nextIndex: number } {
+  const tableLines: string[] = [];
+  let i = startIndex;
+  while (i < lines.length && lines[i].trimStart().startsWith("|")) {
+    tableLines.push(lines[i]);
+    i++;
+  }
+
+  // Parse rows, skipping the separator line (| --- | --- |)
+  const tableData: string[][] = [];
+  for (const tl of tableLines) {
+    const trimmed = tl.trim();
+    // Skip separator lines like | --- | --- |
+    if (/^\|[\s\-:|]+\|$/.test(trimmed)) {
+      continue;
+    }
+    // Split cells: remove leading/trailing |, split by |, trim each cell
+    const cells = trimmed
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((c) => c.trim());
+    tableData.push(cells);
+  }
+
+  return {
+    block: makeBlock("table", [], { tableData }),
+    nextIndex: i,
+  };
 }
 
 // ---- Code block parsing ----

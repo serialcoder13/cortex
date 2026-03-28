@@ -17,11 +17,17 @@ export function TextContent({ content }: TextContentProps) {
     return <>{"\u200B"}</>;
   }
 
+  // Check if the last span ends with "\n" — browsers collapse trailing newlines
+  // in contentEditable, so we append a newline to make it visible
+  const lastSpan = content[content.length - 1];
+  const needsTrailingNewline = lastSpan && lastSpan.text.endsWith("\n");
+
   return (
     <>
       {content.map((span, i) => (
         <SpanRenderer key={i} span={span} />
       ))}
+      {needsTrailingNewline && "\n"}
     </>
   );
 }
@@ -53,10 +59,13 @@ function SpanRenderer({ span }: { span: TextSpan }) {
       case "code":
         element = (
           <code
-            className="cx-rounded cx-px-1.5 cx-py-0.5 cx-font-mono cx-text-sm"
             style={{
-              backgroundColor: "var(--bg-tertiary)",
-              color: "var(--accent)",
+              borderRadius: 4,
+              padding: "2px 6px",
+              fontFamily: "'SF Mono', 'Fira Code', Menlo, monospace",
+              fontSize: "0.875em",
+              backgroundColor: "var(--bg-tertiary, #eee)",
+              color: "var(--accent, #2563eb)",
             }}
           >
             {element}
@@ -67,8 +76,7 @@ function SpanRenderer({ span }: { span: TextSpan }) {
         element = (
           <a
             href={mark.attrs?.href}
-            className="cx-underline"
-            style={{ color: "var(--accent)" }}
+            style={{ color: "var(--accent, #2563eb)", textDecoration: "underline" }}
             target="_blank"
             rel="noopener noreferrer"
           >

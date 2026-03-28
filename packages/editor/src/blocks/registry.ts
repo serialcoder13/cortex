@@ -30,6 +30,8 @@ export const blockDefinitions: BlockDefinition[] = [
   { type: "image", label: "Image", description: "Upload or embed an image", shortcut: undefined, keywords: ["image", "photo", "picture", "img"], hasContent: false },
   { type: "embed", label: "Embed", description: "Embed a URL", shortcut: undefined, keywords: ["embed", "iframe", "video", "url"], hasContent: false },
   { type: "table", label: "Table", description: "Simple table", shortcut: undefined, keywords: ["table", "grid", "spreadsheet"], hasContent: false },
+  { type: "mermaid", label: "Mermaid", description: "Mermaid diagram", shortcut: undefined, keywords: ["mermaid", "diagram", "chart", "graph", "flowchart", "sequence"], hasContent: false },
+  { type: "customComponent", label: "Component", description: "Custom component", shortcut: undefined, keywords: ["component", "custom", "widget", "plugin"], hasContent: false },
 ];
 
 export function getBlockDefinition(type: BlockType): BlockDefinition | undefined {

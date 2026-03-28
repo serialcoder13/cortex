@@ -5,9 +5,10 @@
 // All colors use CSS variables for theme compatibility.
 // ============================================================
 
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { Block } from "../core/types";
 import { TextContent } from "./TextContent";
+import { getRegisteredComponent } from "./component-registry";
 
 interface BlockRendererProps {
   block: Block;
@@ -43,6 +44,12 @@ export function BlockRenderer({ block, onToggleTodo, onToggleCollapse }: BlockRe
       return <DividerBlock />;
     case "image":
       return <ImageBlock block={block} />;
+    case "table":
+      return <TableBlock block={block} />;
+    case "mermaid":
+      return <MermaidBlock block={block} />;
+    case "customComponent":
+      return <CustomComponentBlock block={block} />;
     default:
       return <ParagraphBlock block={block} />;
   }
@@ -52,21 +59,21 @@ export function BlockRenderer({ block, onToggleTodo, onToggleCollapse }: BlockRe
 
 function ParagraphBlock({ block }: { block: Block }) {
   return (
-    <div data-content className="cx-min-h-[1.5em] cx-leading-relaxed cx-py-[1px]">
+    <div data-content style={{ minHeight: "1.5em", lineHeight: 1.625, padding: "1px 0" }}>
       <TextContent content={block.content} />
     </div>
   );
 }
 
 function HeadingBlock({ block, level }: { block: Block; level: 1 | 2 | 3 }) {
-  const styles = {
-    1: "cx-text-3xl cx-font-bold cx-leading-tight cx-mt-10 cx-mb-1",
-    2: "cx-text-2xl cx-font-semibold cx-leading-tight cx-mt-8 cx-mb-1",
-    3: "cx-text-xl cx-font-semibold cx-leading-snug cx-mt-6 cx-mb-1",
+  const styles: Record<1 | 2 | 3, React.CSSProperties> = {
+    1: { fontSize: "1.875rem", fontWeight: 700, lineHeight: 1.25, marginTop: 40, marginBottom: 4 },
+    2: { fontSize: "1.5rem", fontWeight: 600, lineHeight: 1.25, marginTop: 32, marginBottom: 4 },
+    3: { fontSize: "1.25rem", fontWeight: 600, lineHeight: 1.375, marginTop: 24, marginBottom: 4 },
   };
 
   return (
-    <div data-content className={`cx-min-h-[1.2em] ${styles[level]}`}>
+    <div data-content style={{ minHeight: "1.2em", ...styles[level] }}>
       <TextContent content={block.content} />
     </div>
   );
@@ -74,15 +81,14 @@ function HeadingBlock({ block, level }: { block: Block; level: 1 | 2 | 3 }) {
 
 function BulletListBlock({ block }: { block: Block }) {
   return (
-    <div className="cx-flex cx-gap-2 cx-pl-1.5">
+    <div style={{ display: "flex", gap: 8, paddingLeft: 6 }}>
       <span
-        className="cx-mt-[0.35em] cx-select-none"
-        style={{ color: "var(--text-muted)" }}
+        style={{ marginTop: "0.35em", userSelect: "none", color: "var(--text-muted)" }}
         contentEditable={false}
       >
         •
       </span>
-      <div data-content className="cx-min-h-[1.5em] cx-flex-1 cx-leading-relaxed">
+      <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
         <TextContent content={block.content} />
       </div>
     </div>
@@ -92,15 +98,20 @@ function BulletListBlock({ block }: { block: Block }) {
 function NumberedListBlock({ block }: { block: Block }) {
   const number = block.props.number ?? 1;
   return (
-    <div className="cx-flex cx-gap-2 cx-pl-1.5">
+    <div style={{ display: "flex", gap: 8, paddingLeft: 6 }}>
       <span
-        className="cx-mt-[0.05em] cx-min-w-[1.2em] cx-text-right cx-select-none"
-        style={{ color: "var(--text-muted)" }}
+        style={{
+          marginTop: "0.05em",
+          minWidth: "1.2em",
+          textAlign: "right",
+          userSelect: "none",
+          color: "var(--text-muted)",
+        }}
         contentEditable={false}
       >
         {String(number)}.
       </span>
-      <div data-content className="cx-min-h-[1.5em] cx-flex-1 cx-leading-relaxed">
+      <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
         <TextContent content={block.content} />
       </div>
     </div>
@@ -120,13 +131,24 @@ function TodoBlock({ block, onToggle }: { block: Block; onToggle?: (id: string) 
   );
 
   return (
-    <div className="cx-flex cx-gap-2 cx-pl-1.5">
+    <div style={{ display: "flex", gap: 8, paddingLeft: 6 }}>
       <button
         type="button"
-        className="cx-mt-[0.2em] cx-h-[18px] cx-w-[18px] cx-flex-shrink-0 cx-rounded-[3px] cx-border cx-flex cx-items-center cx-justify-center cx-transition-all"
         style={{
+          marginTop: "0.2em",
+          height: 18,
+          width: 18,
+          flexShrink: 0,
+          borderRadius: 3,
+          border: "1px solid",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition: "all 150ms",
           borderColor: checked ? "var(--accent)" : "var(--border-secondary)",
           backgroundColor: checked ? "var(--accent)" : "transparent",
+          padding: 0,
+          cursor: "pointer",
         }}
         contentEditable={false}
         onClick={handleClick}
@@ -134,15 +156,20 @@ function TodoBlock({ block, onToggle }: { block: Block; onToggle?: (id: string) 
         role="checkbox"
       >
         {checked && (
-          <svg className="cx-h-3 cx-w-3" viewBox="0 0 16 16" fill="white">
+          <svg style={{ height: 12, width: 12 }} viewBox="0 0 16 16" fill="white">
             <path d="M12.207 4.793a1 1 0 0 1 0 1.414l-5 5a1 1 0 0 1-1.414 0l-2-2a1 1 0 0 1 1.414-1.414L6.5 9.086l4.293-4.293a1 1 0 0 1 1.414 0z" />
           </svg>
         )}
       </button>
       <div
         data-content
-        className={`cx-min-h-[1.5em] cx-flex-1 cx-leading-relaxed cx-transition-colors ${checked ? "cx-line-through" : ""}`}
-        style={checked ? { color: "var(--text-muted)" } : undefined}
+        style={{
+          minHeight: "1.5em",
+          flex: 1,
+          lineHeight: 1.625,
+          transition: "color 150ms, background-color 150ms",
+          ...(checked ? { textDecoration: "line-through", color: "var(--text-muted)" } : {}),
+        }}
       >
         <TextContent content={block.content} />
       </div>
@@ -154,16 +181,24 @@ function CodeBlock({ block }: { block: Block }) {
   const language = block.props.language ?? "";
   return (
     <div
-      className="cx-my-2 cx-rounded-lg cx-border"
       style={{
+        margin: "8px 0",
+        borderRadius: 8,
+        border: "1px solid",
         backgroundColor: "var(--bg-secondary)",
         borderColor: "var(--border-primary)",
       }}
     >
       {language && (
         <div
-          className="cx-px-4 cx-py-1 cx-text-xs cx-border-b cx-select-none"
           style={{
+            paddingLeft: 16,
+            paddingRight: 16,
+            paddingTop: 4,
+            paddingBottom: 4,
+            fontSize: "0.75rem",
+            borderBottom: "1px solid",
+            userSelect: "none",
             color: "var(--text-muted)",
             borderColor: "var(--border-primary)",
           }}
@@ -172,11 +207,15 @@ function CodeBlock({ block }: { block: Block }) {
           {language}
         </div>
       )}
-      <pre className="cx-p-4 cx-overflow-x-auto">
+      <pre style={{ padding: 16, overflowX: "auto" }}>
         <code
           data-content
-          className="cx-font-mono cx-text-sm cx-leading-relaxed"
-          style={{ color: "var(--text-primary)" }}
+          style={{
+            fontFamily: "'SF Mono', 'Fira Code', Menlo, monospace",
+            fontSize: "0.875rem",
+            lineHeight: 1.625,
+            color: "var(--text-primary)",
+          }}
         >
           <TextContent content={block.content} />
         </code>
@@ -187,16 +226,26 @@ function CodeBlock({ block }: { block: Block }) {
 
 function QuoteBlock({ block }: { block: Block }) {
   return (
-    <div className="cx-flex">
+    <div style={{ display: "flex" }}>
       <div
-        className="cx-mr-3 cx-w-1 cx-flex-shrink-0 cx-rounded-full"
-        style={{ backgroundColor: "var(--accent)" }}
+        style={{
+          marginRight: 12,
+          width: 4,
+          flexShrink: 0,
+          borderRadius: "9999px",
+          backgroundColor: "var(--accent)",
+        }}
         contentEditable={false}
       />
       <div
         data-content
-        className="cx-min-h-[1.5em] cx-flex-1 cx-italic cx-leading-relaxed"
-        style={{ color: "var(--text-secondary)" }}
+        style={{
+          minHeight: "1.5em",
+          flex: 1,
+          fontStyle: "italic",
+          lineHeight: 1.625,
+          color: "var(--text-secondary)",
+        }}
       >
         <TextContent content={block.content} />
       </div>
@@ -209,16 +258,20 @@ function CalloutBlock({ block }: { block: Block }) {
 
   return (
     <div
-      className="cx-flex cx-gap-3 cx-rounded-lg cx-border cx-p-4"
       style={{
+        display: "flex",
+        gap: 12,
+        borderRadius: 8,
+        border: "1px solid",
+        padding: 16,
         backgroundColor: "var(--bg-secondary)",
         borderColor: "var(--border-primary)",
       }}
     >
-      <span className="cx-text-lg cx-select-none" contentEditable={false}>
+      <span style={{ fontSize: "1.125rem", userSelect: "none" }} contentEditable={false}>
         {emoji}
       </span>
-      <div data-content className="cx-min-h-[1.5em] cx-flex-1 cx-leading-relaxed">
+      <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
         <TextContent content={block.content} />
       </div>
     </div>
@@ -239,26 +292,42 @@ function ToggleBlock({ block, onToggle }: { block: Block; onToggle?: (id: string
 
   return (
     <div>
-      <div className="cx-flex cx-gap-1">
+      <div style={{ display: "flex", gap: 4 }}>
         <button
           type="button"
-          className="cx-mt-[0.25em] cx-h-5 cx-w-5 cx-flex-shrink-0 cx-transition-transform"
+          style={{
+            marginTop: "0.25em",
+            height: 20,
+            width: 20,
+            flexShrink: 0,
+            transition: "transform 150ms",
+            color: "var(--text-muted)",
+            transform: collapsed ? "rotate(0deg)" : "rotate(90deg)",
+            background: "none",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+          }}
           contentEditable={false}
           onClick={handleClick}
-          style={{ color: "var(--text-muted)", transform: collapsed ? "rotate(0deg)" : "rotate(90deg)" }}
         >
-          <svg viewBox="0 0 16 16" fill="currentColor" className="cx-h-full cx-w-full">
+          <svg viewBox="0 0 16 16" fill="currentColor" style={{ height: "100%", width: "100%" }}>
             <path d="M6 4l4 4-4 4V4z" />
           </svg>
         </button>
-        <div data-content className="cx-min-h-[1.5em] cx-flex-1 cx-font-medium cx-leading-relaxed">
+        <div data-content style={{ minHeight: "1.5em", flex: 1, fontWeight: 500, lineHeight: 1.625 }}>
           <TextContent content={block.content} />
         </div>
       </div>
       {!collapsed && block.children.length > 0 && (
         <div
-          className="cx-ml-6 cx-mt-1 cx-border-l cx-pl-4"
-          style={{ borderColor: "var(--border-primary)" }}
+          style={{
+            marginLeft: 24,
+            marginTop: 4,
+            borderLeft: "1px solid",
+            paddingLeft: 16,
+            borderColor: "var(--border-primary)",
+          }}
         >
           {/* Children rendered by parent editor */}
         </div>
@@ -269,7 +338,7 @@ function ToggleBlock({ block, onToggle }: { block: Block; onToggle?: (id: string
 
 function DividerBlock() {
   return (
-    <div className="cx-py-3" contentEditable={false}>
+    <div style={{ paddingTop: 12, paddingBottom: 12 }} contentEditable={false}>
       <hr style={{ borderColor: "var(--border-primary)" }} />
     </div>
   );
@@ -329,8 +398,19 @@ function ImageBlock({ block }: { block: Block }) {
     return (
       <button
         type="button"
-        className="cx-flex cx-h-48 cx-w-full cx-cursor-pointer cx-flex-col cx-items-center cx-justify-center cx-gap-2 cx-rounded-lg cx-border cx-border-dashed cx-bg-transparent cx-transition-colors"
         style={{
+          display: "flex",
+          height: 192,
+          width: "100%",
+          cursor: "pointer",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+          borderRadius: 8,
+          border: "1px dashed",
+          backgroundColor: "transparent",
+          transition: "color 150ms, background-color 150ms",
           borderColor: "var(--border-secondary)",
           color: "var(--text-muted)",
         }}
@@ -339,19 +419,19 @@ function ImageBlock({ block }: { block: Block }) {
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-        <svg className="cx-h-8 cx-w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <svg style={{ height: 32, width: 32 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
             d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"
           />
         </svg>
-        <span className="cx-text-sm">Click to upload or drag an image</span>
+        <span style={{ fontSize: "0.875rem" }}>Click to upload or drag an image</span>
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*"
-          className="cx-hidden"
+          style={{ display: "none" }}
           onChange={handleInputChange}
         />
       </button>
@@ -359,13 +439,219 @@ function ImageBlock({ block }: { block: Block }) {
   }
 
   return (
-    <div className="cx-my-2" contentEditable={false}>
-      <img src={src} alt={alt} className="cx-max-w-full cx-rounded-lg" />
+    <div style={{ margin: "8px 0" }} contentEditable={false}>
+      <img src={src} alt={alt} style={{ maxWidth: "100%", borderRadius: 8 }} />
       {caption && (
-        <p className="cx-mt-1 cx-text-center cx-text-sm" style={{ color: "var(--text-muted)" }}>
+        <p style={{ marginTop: 4, textAlign: "center", fontSize: "0.875rem", color: "var(--text-muted)" }}>
           {caption}
         </p>
       )}
+    </div>
+  );
+}
+
+function TableBlock({ block }: { block: Block }) {
+  const tableData = block.props.tableData ?? [
+    ["", "", ""],
+    ["", "", ""],
+    ["", "", ""],
+  ];
+  const hasHeader = block.props.tableHeader ?? false;
+
+  const headerRow = hasHeader ? tableData[0] : null;
+  const bodyRows = hasHeader ? tableData.slice(1) : tableData;
+
+  return (
+    <div style={{ margin: "8px 0" }} contentEditable={false}>
+      <table
+        style={{
+          width: "100%",
+          borderCollapse: "collapse",
+          borderColor: "var(--border-primary)",
+        }}
+      >
+        {headerRow && (
+          <thead>
+            <tr>
+              {headerRow.map((cell, i) => (
+                <th
+                  key={i}
+                  contentEditable={false}
+                  style={{
+                    border: "1px solid var(--border-primary)",
+                    padding: "6px 12px",
+                    textAlign: "left",
+                    fontWeight: 600,
+                    backgroundColor: "var(--bg-secondary)",
+                    color: "var(--text-primary)",
+                  }}
+                >
+                  {cell}
+                </th>
+              ))}
+            </tr>
+          </thead>
+        )}
+        <tbody>
+          {bodyRows.map((row, ri) => (
+            <tr key={ri}>
+              {row.map((cell, ci) => (
+                <td
+                  key={ci}
+                  contentEditable={false}
+                  style={{
+                    border: "1px solid var(--border-primary)",
+                    padding: "6px 12px",
+                    textAlign: "left",
+                    color: "var(--text-primary)",
+                  }}
+                >
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MermaidBlock({ block }: { block: Block }) {
+  const code = block.props.mermaidCode ?? "";
+  const containerId = `mermaid-${block.id}`;
+  const [svg, setSvg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!code) return;
+
+    const mermaid = (window as any).mermaid;
+    if (!mermaid?.render) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const result = await mermaid.render(containerId, code);
+        if (!cancelled) {
+          setSvg(result.svg);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Mermaid render error");
+          setSvg(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [code, containerId]);
+
+  return (
+    <div
+      style={{
+        margin: "8px 0",
+        borderRadius: 8,
+        border: "1px solid",
+        overflow: "hidden",
+        backgroundColor: "var(--bg-secondary)",
+        borderColor: "var(--border-primary)",
+      }}
+      contentEditable={false}
+    >
+      <div
+        style={{
+          paddingLeft: 16,
+          paddingRight: 16,
+          paddingTop: 4,
+          paddingBottom: 4,
+          fontSize: "0.75rem",
+          borderBottom: "1px solid",
+          userSelect: "none",
+          color: "var(--text-muted)",
+          borderColor: "var(--border-primary)",
+        }}
+      >
+        Mermaid
+      </div>
+      <div style={{ padding: 16 }}>
+        {svg ? (
+          <div dangerouslySetInnerHTML={{ __html: svg }} />
+        ) : error ? (
+          <pre
+            style={{
+              fontFamily: "'SF Mono', 'Fira Code', Menlo, monospace",
+              fontSize: "0.875rem",
+              whiteSpace: "pre-wrap",
+              color: "var(--text-secondary)",
+            }}
+          >
+            {code}
+            {"\n\n"}
+            <span style={{ color: "var(--text-muted)" }}>Error: {error}</span>
+          </pre>
+        ) : (
+          <pre
+            style={{
+              fontFamily: "'SF Mono', 'Fira Code', Menlo, monospace",
+              fontSize: "0.875rem",
+              whiteSpace: "pre-wrap",
+              color: "var(--text-secondary)",
+            }}
+          >
+            {code}
+            {!(window as any).mermaid && (
+              <>
+                {"\n\n"}
+                <span style={{ color: "var(--text-muted)" }}>
+                  Mermaid library not loaded. Include mermaid to render this diagram.
+                </span>
+              </>
+            )}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CustomComponentBlock({ block }: { block: Block }) {
+  const componentName = (block.props.componentName ?? "") as string;
+  const def = getRegisteredComponent(componentName);
+
+  if (!def) {
+    return (
+      <div
+        style={{
+          margin: "8px 0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: 8,
+          border: "1px dashed var(--border-secondary, #d4d4d4)",
+          padding: 24,
+          color: "var(--text-muted, #999)",
+          fontSize: 13,
+        }}
+        contentEditable={false}
+      >
+        Custom component: <strong style={{ marginLeft: 4 }}>{componentName || "unnamed"}</strong>&nbsp;(not registered)
+      </div>
+    );
+  }
+
+  const Comp = def.component;
+
+  return (
+    <div style={{ margin: "8px 0" }} contentEditable={false}>
+      <Comp
+        props={block.props}
+        readOnly={false}
+      />
     </div>
   );
 }

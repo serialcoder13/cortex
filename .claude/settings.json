@@ -81,7 +81,9 @@
       "Bash(xargs -I {} find {} -type f \\\\\\( -name \"*.tsx\" -o -name \"*.ts\" \\\\\\))",
       "Bash(grep -E \"^\\\\.|\\\\.tsx$|\\\\.ts$\")",
       "Bash(npx playwright:*)",
-      "Bash(PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium)"
+      "Bash(PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium)",
+      "Read(//Users/kirangrandhi/.claude/projects/-Users-kirangrandhi-kiran-cortex/6c806836-0747-4c66-901d-a3b9e615cfb5/subagents/**)",
+      "Read(//Users/kirangrandhi/kiran/cortex/packages/editor/**)"
     ],
     "additionalDirectories": [
       "/Users/kirangrandhi/Library/Caches/com.cortex.app"

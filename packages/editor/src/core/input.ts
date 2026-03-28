@@ -87,12 +87,42 @@ export function handleKeyDown(
   }
 
   // ---- Enter key ----
-  if (e.key === "Enter" && !e.shiftKey) {
+  if (e.key === "Enter") {
     e.preventDefault();
 
-    // If selection is in an empty list/todo/quote block, convert to paragraph
     const block = findBlock(doc, selection.focus.blockId);
-    if (block) {
+    if (!block) return NOOP;
+
+    // Code blocks: Enter inserts a newline within the block (not a split)
+    // Two consecutive enters at the end (trailing \n) exits the code block
+    if (block.type === "codeBlock") {
+      const text = getPlainText(block.content);
+      const offset = selection.focus.offset;
+
+      // If the text ends with \n and cursor is at the end, exit code block
+      // by removing the trailing newline and creating a new paragraph
+      if (text.endsWith("\n") && offset === text.length && !e.shiftKey) {
+        // Remove trailing newline
+        const trimResult = deleteText(doc, block.id, text.length - 1, 1);
+        // Insert new paragraph after
+        const newResult = insertBlockOp(trimResult.doc, block.id, "paragraph");
+        return {
+          result: {
+            doc: newResult.doc,
+            ops: [...trimResult.ops, ...newResult.ops],
+            selection: newResult.selection,
+          },
+          handled: true,
+        };
+      }
+
+      // Otherwise, insert a newline character
+      const result = insertText(doc, selection.focus.blockId, offset, "\n");
+      return { result, handled: true };
+    }
+
+    // If selection is in an empty list/todo/quote block, convert to paragraph
+    if (!e.shiftKey) {
       const text = getPlainText(block.content);
       const convertableTypes: BlockType[] = ["bulletList", "numberedList", "todo", "quote"];
       if (text === "" && convertableTypes.includes(block.type)) {

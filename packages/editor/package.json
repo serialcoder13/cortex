@@ -19,6 +19,8 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "harness": "vite --config vite.config.ts",
+    "test": "playwright test",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/"
   },
@@ -28,6 +30,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
+    "@tailwindcss/vite": "^4.2.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4.7.0",
@@ -39,5 +42,8 @@
     "tsup": "^8",
     "typescript": "^5",
     "vite": "^6.4.1"
+  },
+  "dependencies": {
+    "lucide-react": "^1.7.0"
   }
 }

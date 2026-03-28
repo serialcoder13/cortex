@@ -30,9 +30,12 @@ import { handleCopy, handleCut, handlePaste } from "./core/clipboard";
 import { History } from "./core/history";
 import { BlockRenderer } from "./blocks/BlockRenderer";
 import type { ApplyResult } from "./core/operations";
-import { setBlockTypeOp, moveBlockOp, toggleMark as toggleMarkOp, replaceContent } from "./core/operations";
+import { setBlockTypeOp, moveBlockOp, toggleMark as toggleMarkOp, replaceContent, insertText as insertTextOp, deleteText as deleteTextOp, deleteBlockOp } from "./core/operations";
 import { SlashCommandMenu } from "./features/slash-command";
 import { FloatingToolbar } from "./features/toolbar";
+import { blocksToMarkdown } from "./markdown/serialize";
+import { FindReplaceBar, findInDocument, type FindMatch } from "./features/find-replace";
+import { GripVertical } from "lucide-react";
 
 // ---- Public API Types ----
 
@@ -51,6 +54,8 @@ export interface CortexEditorProps {
   placeholder?: string;
   /** Read-only mode */
   readOnly?: boolean;
+  /** Debug mode — shows event log and live markdown output below the editor */
+  debugMode?: boolean;
   /** CSS class for the outer container */
   className?: string;
 }
@@ -125,108 +130,104 @@ function getCaretRect(): DOMRect | null {
   return rect;
 }
 
-// ---- Drag Handle & Add Button SVGs ----
+// ---- Drag Handle & Add Button Icons (Lucide) ----
 
-function DragHandleIcon() {
-  return (
-    <svg width="14" height="20" viewBox="0 0 14 20" fill="currentColor">
-      <circle cx="4" cy="4" r="1.5" />
-      <circle cx="10" cy="4" r="1.5" />
-      <circle cx="4" cy="10" r="1.5" />
-      <circle cx="10" cy="10" r="1.5" />
-      <circle cx="4" cy="16" r="1.5" />
-      <circle cx="10" cy="16" r="1.5" />
-    </svg>
-  );
-}
+// ---- Drag Handle (single handle that tracks hovered block) ----
 
-function AddBlockIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-      <line x1="8" y1="3" x2="8" y2="13" />
-      <line x1="3" y1="8" x2="13" y2="8" />
-    </svg>
-  );
-}
-
-// ---- Drag Handle Overlay (rendered outside contentEditable) ----
-
-function DragHandleOverlay({
-  blockId,
+function DragHandle({
   editorRef,
   onDragStart,
-  onDragEnd,
 }: Readonly<{
-  blockId: string;
   editorRef: React.RefObject<HTMLDivElement | null>;
   onDragStart: (e: React.DragEvent, id: string) => void;
-  onDragEnd: () => void;
 }>) {
-  const [pos, setPos] = useState<{ top: number } | null>(null);
-  const [visible, setVisible] = useState(false);
+  const [hovered, setHovered] = useState<{ blockId: string; top: number } | null>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
+  const isOverHandle = useRef(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
+    const container = editor.parentElement;
+    if (!container) return;
 
-    const blockEl = editor.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement | null;
-    if (!blockEl) return;
+    const onMouseMove = (e: MouseEvent) => {
+      clearTimeout(hideTimer.current);
 
-    const updatePos = () => {
-      const editorRect = editor.parentElement?.getBoundingClientRect();
-      const blockRect = blockEl.getBoundingClientRect();
-      if (editorRect) {
-        setPos({ top: blockRect.top - editorRect.top + 4 });
+      // Check if mouse is over the handle itself
+      if (handleRef.current?.contains(e.target as Node)) return;
+
+      const blockEls = editor.querySelectorAll("[data-block-id]");
+      let found: { blockId: string; top: number } | null = null;
+
+      for (const blockEl of blockEls) {
+        const rect = (blockEl as HTMLElement).getBoundingClientRect();
+        if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+          const containerRect = container.getBoundingClientRect();
+          found = {
+            blockId: blockEl.getAttribute("data-block-id")!,
+            top: rect.top - containerRect.top + 4,
+          };
+          break;
+        }
       }
+      setHovered(found);
     };
 
-    updatePos();
+    const onMouseLeave = (e: MouseEvent) => {
+      // Don't hide if mouse moved to the drag handle
+      if (handleRef.current?.contains(e.relatedTarget as Node)) return;
+      if (isOverHandle.current) return;
+      // Small delay to allow moving to the handle
+      hideTimer.current = setTimeout(() => {
+        if (!isOverHandle.current) setHovered(null);
+      }, 150);
+    };
 
-    const onEnter = () => setVisible(true);
-    const onLeave = () => setVisible(false);
-
-    blockEl.addEventListener("mouseenter", onEnter);
-    blockEl.addEventListener("mouseleave", onLeave);
-
-    // Update position on scroll/resize
-    const observer = new ResizeObserver(updatePos);
-    observer.observe(blockEl);
-
+    // Listen on document for moves (so handle area outside container is covered)
+    document.addEventListener("mousemove", onMouseMove);
+    container.addEventListener("mouseleave", onMouseLeave);
     return () => {
-      blockEl.removeEventListener("mouseenter", onEnter);
-      blockEl.removeEventListener("mouseleave", onLeave);
-      observer.disconnect();
+      document.removeEventListener("mousemove", onMouseMove);
+      container.removeEventListener("mouseleave", onMouseLeave);
+      clearTimeout(hideTimer.current);
     };
-  }, [blockId, editorRef]);
+  }, [editorRef]);
 
-  if (!pos) return null;
+  if (!hovered) return null;
 
   return (
     <div
+      ref={handleRef}
       draggable
-      onDragStart={(e) => onDragStart(e, blockId)}
-      onDragEnd={onDragEnd}
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
+      onDragStart={(e) => onDragStart(e, hovered.blockId)}
+      onMouseEnter={() => {
+        isOverHandle.current = true;
+        clearTimeout(hideTimer.current);
+      }}
+      onMouseLeave={() => {
+        isOverHandle.current = false;
+        hideTimer.current = setTimeout(() => setHovered(null), 150);
+      }}
       style={{
         position: "absolute",
         left: -32,
-        top: pos.top,
+        top: hovered.top,
         display: "flex",
         width: 24,
         height: 24,
         alignItems: "center",
         justifyContent: "center",
         borderRadius: 4,
-        color: "var(--text-muted)",
+        color: "var(--text-muted, #999)",
         cursor: "grab",
-        opacity: visible ? 1 : 0,
-        transition: "opacity 150ms",
         zIndex: 10,
+        transition: "opacity 100ms",
       }}
       aria-label="Drag to reorder"
     >
-      <DragHandleIcon />
+      <GripVertical size={14} />
     </div>
   );
 }
@@ -243,6 +244,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       idleDebounceMs = 60_000,
       placeholder = "Press '/' for commands, or just start typing...",
       readOnly = false,
+      debugMode = false,
       className,
     },
     ref,
@@ -283,6 +285,12 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
     // Ref to track selection for toolbar/slash command interactions
     const selectionRef = useRef(selection);
     selectionRef.current = selection;
+
+    // Find & Replace state
+    const [findReplace, setFindReplace] = useState<{ open: boolean; showReplace: boolean }>({
+      open: false,
+      showReplace: false,
+    });
 
     // ---- Idle timer ----
     const resetIdleTimer = useCallback(() => {
@@ -363,20 +371,31 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         }
 
         const text = getPlainText(block.content);
+        const offset = sel.focus.offset;
 
-        // Check if text starts with "/"
-        if (text.startsWith("/")) {
-          const filter = text.slice(1); // Everything after "/"
-          const caretRect = getCaretRect();
-          if (caretRect) {
-            setSlashCommand({
-              active: true,
-              blockId: sel.focus.blockId,
-              filter,
-              position: { x: caretRect.left, y: caretRect.bottom + 4 },
-            });
+        // Find "/" before the cursor: look backward from cursor for the last "/"
+        // The slash must be preceded by a space, newline, or be at position 0
+        const textBeforeCursor = text.slice(0, offset);
+        const slashIdx = textBeforeCursor.lastIndexOf("/");
+
+        if (slashIdx !== -1 && (slashIdx === 0 || text[slashIdx - 1] === " ")) {
+          const filter = textBeforeCursor.slice(slashIdx + 1);
+          // Close if filter is too long (user probably isn't looking for a command)
+          if (filter.length <= 20) {
+            const caretRect = getCaretRect();
+            if (caretRect) {
+              setSlashCommand({
+                active: true,
+                blockId: sel.focus.blockId,
+                filter,
+                position: { x: caretRect.left, y: caretRect.bottom + 4 },
+              });
+              return;
+            }
           }
-        } else if (slashCommand.active) {
+        }
+
+        if (slashCommand.active) {
           setSlashCommand(prev => ({ ...prev, active: false }));
         }
       },
@@ -390,44 +409,52 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         const block = findBlock(docRef.current, blockId);
         if (!block) return;
 
-        // Clear the "/" text from the block
         const text = getPlainText(block.content);
         let currentDoc = docRef.current;
 
-        if (text.length > 0) {
+        // Find where the "/" trigger is in the text
+        const sel = selectionRef.current;
+        const cursorOffset = sel?.focus.blockId === blockId ? sel.focus.offset : text.length;
+        const textBeforeCursor = text.slice(0, cursorOffset);
+        const slashIdx = textBeforeCursor.lastIndexOf("/");
+        const slashEnd = cursorOffset; // cursor is after the filter text
+
+        if (slashIdx === 0 && slashEnd === text.length) {
+          // "/" is the entire block content → clear and convert type
           const clearResult = replaceContent(currentDoc, blockId, []);
           currentDoc = clearResult.doc;
-          // Record as part of the same operation batch
-          if (clearResult.ops.length > 0) {
-            historyRef.current.push(clearResult.ops, selectionRef.current, clearResult.selection);
-          }
-        }
-
-        // Set the block type
-        const result = setBlockTypeOp(currentDoc, blockId, type);
-        if (result.doc !== currentDoc) {
-          setDoc(result.doc);
-          docRef.current = result.doc;
-
-          if (result.ops.length > 0) {
-            historyRef.current.push(result.ops, selectionRef.current, result.selection);
-          }
-
-          // Set selection to beginning of the block
+          const result = setBlockTypeOp(currentDoc, blockId, type);
+          apply(result);
+          // Explicitly set cursor to start of the converted block
           const newSel: EditorSelection = {
             anchor: { blockId, offset: 0 },
             focus: { blockId, offset: 0 },
           };
           setSelection(newSel);
-
-          onChange?.(result.doc);
+          selectionRef.current = newSel;
+        } else if (slashIdx >= 0) {
+          // "/" is in the middle of text → remove the "/filter" and insert new block after
+          const delResult = deleteTextOp(currentDoc, blockId, slashIdx, slashEnd - slashIdx);
+          currentDoc = delResult.doc;
+          // Insert a new block of the selected type after this one
+          const newBlock = createBlock(type);
+          currentDoc = insertBlockAfter(currentDoc, blockId, newBlock);
+          setDoc(currentDoc);
+          docRef.current = currentDoc;
+          const newSel: EditorSelection = {
+            anchor: { blockId: newBlock.id, offset: 0 },
+            focus: { blockId: newBlock.id, offset: 0 },
+          };
+          setSelection(newSel);
+          selectionRef.current = newSel;
+          onChange?.(currentDoc);
           resetIdleTimer();
         }
 
         // Close the menu
         setSlashCommand({ active: false, blockId: "", filter: "", position: { x: 0, y: 0 } });
       },
-      [slashCommand.blockId, onChange, resetIdleTimer],
+      [slashCommand.blockId, onChange, resetIdleTimer, apply],
     );
 
     /** Close slash command menu */
@@ -544,35 +571,6 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       [],
     );
 
-    const handleDragOver = useCallback(
-      (e: React.DragEvent, blockIndex: number) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        setDragState(prev => ({ ...prev, dropTargetIndex: blockIndex }));
-      },
-      [],
-    );
-
-    const handleDragLeave = useCallback(() => {
-      setDragState(prev => ({ ...prev, dropTargetIndex: null }));
-    }, []);
-
-    const handleDrop = useCallback(
-      (e: React.DragEvent, targetIndex: number) => {
-        e.preventDefault();
-        const blockId = e.dataTransfer.getData("text/plain");
-        if (!blockId) return;
-
-        const result = moveBlockOp(docRef.current, blockId, targetIndex);
-        if (result.doc !== docRef.current) {
-          apply(result);
-        }
-
-        setDragState({ draggingBlockId: null, dropTargetIndex: null });
-      },
-      [apply],
-    );
-
     const handleDragEnd = useCallback(() => {
       setDragState({ draggingBlockId: null, dropTargetIndex: null });
     }, []);
@@ -622,7 +620,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       (e: React.KeyboardEvent) => {
         if (readOnly || isComposing.current) return;
 
-        // If slash command is active, let it handle Arrow/Enter/Escape
+        // If slash command is active, let the SlashCommandMenu handle these keys
         if (slashCommand.active) {
           if (
             e.key === "ArrowDown" ||
@@ -630,7 +628,9 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
             e.key === "Enter" ||
             e.key === "Escape"
           ) {
-            // These are handled by the SlashCommandMenu's document-level keydown listener
+            e.preventDefault();
+            e.stopPropagation(); // Prevent any further handling
+            // Don't handle Enter/etc here — the slash menu's capture-phase listener handles it
             return;
           }
         }
@@ -643,6 +643,20 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         }
 
         const currentDoc = docRef.current;
+
+        // Find: Cmd+F
+        if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+          e.preventDefault();
+          setFindReplace({ open: true, showReplace: false });
+          return;
+        }
+
+        // Find & Replace: Cmd+H
+        if ((e.metaKey || e.ctrlKey) && e.key === "h") {
+          e.preventDefault();
+          setFindReplace({ open: true, showReplace: true });
+          return;
+        }
 
         // Undo: Cmd+Z
         if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "z") {
@@ -675,6 +689,19 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
               selectionRef.current = result.selection;
             }
             onChange?.(result.doc);
+          }
+          return;
+        }
+
+        // Delete entire block: Shift+Backspace or Cmd+Shift+Delete
+        if (e.shiftKey && (e.key === "Backspace" || e.key === "Delete")) {
+          e.preventDefault();
+          const currentSel = selectionRef.current;
+          if (currentSel && currentDoc.blocks.length > 1) {
+            const delResult = deleteBlockOp(currentDoc, currentSel.focus.blockId);
+            if (delResult.doc !== currentDoc) {
+              apply(delResult);
+            }
           }
           return;
         }
@@ -924,7 +951,39 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
 
     // ---- Render ----
     return (
-      <div className={`cx-editor-container ${className ?? ""}`} style={{ position: "relative" }}>
+      <div
+        className={`cx-editor-container ${className ?? ""}`}
+        style={{ position: "relative" }}
+        onDragOver={(e) => {
+          if (!dragState.draggingBlockId) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          // Find the closest block based on mouse Y position
+          const editorEl = rootRef.current;
+          if (!editorEl) return;
+          const blockEls = editorEl.querySelectorAll("[data-block-id]");
+          let targetIdx = doc.blocks.length - 1;
+          for (let i = 0; i < blockEls.length; i++) {
+            const rect = blockEls[i].getBoundingClientRect();
+            if (e.clientY < rect.top + rect.height / 2) {
+              targetIdx = i;
+              break;
+            }
+          }
+          setDragState(prev => ({ ...prev, dropTargetIndex: targetIdx }));
+        }}
+        onDrop={(e) => {
+          if (!dragState.draggingBlockId) return;
+          e.preventDefault();
+          const targetIndex = dragState.dropTargetIndex ?? 0;
+          const result = moveBlockOp(docRef.current, dragState.draggingBlockId, targetIndex);
+          if (result.doc !== docRef.current) {
+            apply(result);
+          }
+          setDragState({ draggingBlockId: null, dropTargetIndex: null });
+        }}
+        onDragEnd={() => setDragState({ draggingBlockId: null, dropTargetIndex: null })}
+      >
         {/* The contentEditable editor area */}
         <div
           ref={rootRef}
@@ -946,21 +1005,40 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           onClick={onRootClick}
           spellCheck
         >
-          {doc.blocks.map((block, blockIndex) => (
+          {doc.blocks.map((block, blockIndex) => {
+            // Reduce spacing between consecutive list items of the same type
+            const listTypes = ["bulletList", "numberedList", "todo"];
+            const isListItem = listTypes.includes(block.type);
+            const prevBlock = blockIndex > 0 ? doc.blocks[blockIndex - 1] : null;
+            const isContinuation = isListItem && prevBlock?.type === block.type;
+            return (
             <div
               key={block.id}
               data-block-id={block.id}
               className="cx-block-wrapper"
               style={{
                 position: "relative",
-                padding: "4px 0",
+                padding: isContinuation ? "1px 0" : "4px 0",
                 opacity: dragState.draggingBlockId === block.id ? 0.5 : 1,
               }}
-              onDragOver={(e) => handleDragOver(e, blockIndex)}
-              onDragLeave={handleDragLeave}
-              onDrop={(e) => handleDrop(e, blockIndex)}
             >
-              {/* Drop indicators and drag handles are rendered outside contentEditable */}
+              {/* Drop indicator line */}
+              {dragState.dropTargetIndex === blockIndex && dragState.draggingBlockId !== block.id && (
+                <div
+                  contentEditable={false}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: 2,
+                    backgroundColor: "var(--accent, #2563eb)",
+                    borderRadius: 1,
+                    pointerEvents: "none",
+                    zIndex: 5,
+                  }}
+                />
+              )}
 
               <BlockRenderer
                 block={
@@ -972,7 +1050,8 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
                 onToggleCollapse={onToggleCollapse}
               />
             </div>
-          ))}
+            );
+          })}
           {/* Drop indicators rendered outside contentEditable */}
         </div>
 
@@ -988,16 +1067,13 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           </div>
         )}
 
-        {/* Drag handles — rendered outside contentEditable to avoid breaking editing */}
-        {!readOnly && doc.blocks.map((block) => (
-          <DragHandleOverlay
-            key={`handle-${block.id}`}
-            blockId={block.id}
+        {/* Drag handle — single handle that follows the hovered block */}
+        {!readOnly && (
+          <DragHandle
             editorRef={rootRef}
             onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
           />
-        ))}
+        )}
 
         {/* Slash Command Menu — rendered outside the contentEditable div */}
         {slashCommand.active && (
@@ -1018,12 +1094,148 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
             onClose={handleToolbarClose}
           />
         )}
+
+        {/* Find & Replace bar */}
+        {findReplace.open && (
+          <FindReplaceBar
+            doc={doc}
+            showReplace={findReplace.showReplace}
+            onHighlight={() => {/* TODO: highlight matches in DOM */}}
+            onNavigate={(match) => {
+              // Set selection to the match
+              setSelection({
+                anchor: { blockId: match.blockId, offset: match.offset },
+                focus: { blockId: match.blockId, offset: match.offset + match.length },
+              });
+              selectionRef.current = {
+                anchor: { blockId: match.blockId, offset: match.offset },
+                focus: { blockId: match.blockId, offset: match.offset + match.length },
+              };
+            }}
+            onReplace={(match, replacement) => {
+              const del = deleteTextOp(docRef.current, match.blockId, match.offset, match.length);
+              const ins = insertTextOp(del.doc, match.blockId, match.offset, replacement);
+              apply(ins);
+            }}
+            onReplaceAll={(matches, replacement) => {
+              // Process in reverse order to maintain offsets
+              let currentDoc = docRef.current;
+              const sorted = [...matches].sort((a, b) =>
+                a.blockIndex !== b.blockIndex
+                  ? b.blockIndex - a.blockIndex
+                  : b.offset - a.offset
+              );
+              for (const m of sorted) {
+                const del = deleteTextOp(currentDoc, m.blockId, m.offset, m.length);
+                const ins = insertTextOp(del.doc, m.blockId, m.offset, replacement);
+                currentDoc = ins.doc;
+              }
+              setDoc(currentDoc);
+              docRef.current = currentDoc;
+              onChange?.(currentDoc);
+            }}
+            onClose={() => setFindReplace({ open: false, showReplace: false })}
+          />
+        )}
+
+        {/* Debug panel — shows live markdown output, document JSON, and event log */}
+        {debugMode && (
+          <DebugPanel doc={doc} selection={selection} />
+        )}
       </div>
     );
   },
 );
 
 // ---- Helpers ----
+
+/** Debug panel — shows live markdown, document model, and selection state */
+function DebugPanel({ doc, selection }: { doc: EditorDocument; selection: EditorSelection | null }) {
+  const [tab, setTab] = useState<"markdown" | "json" | "selection">("markdown");
+
+  const markdown = blocksToMarkdown(doc.blocks);
+
+  const tabs = [
+    { id: "markdown" as const, label: "Markdown" },
+    { id: "json" as const, label: "Document JSON" },
+    { id: "selection" as const, label: "Selection" },
+  ];
+
+  return (
+    <div
+      style={{
+        marginTop: 16,
+        border: "1px solid var(--border-primary, #e5e5e5)",
+        borderRadius: 8,
+        overflow: "hidden",
+        fontSize: 12,
+        fontFamily: "'SF Mono', 'Fira Code', Menlo, Consolas, monospace",
+      }}
+    >
+      {/* Tab bar */}
+      <div
+        style={{
+          display: "flex",
+          gap: 0,
+          borderBottom: "1px solid var(--border-primary, #e5e5e5)",
+          backgroundColor: "var(--bg-secondary, #f5f5f5)",
+        }}
+      >
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            style={{
+              padding: "6px 12px",
+              border: "none",
+              background: tab === t.id ? "var(--bg-primary, #fff)" : "transparent",
+              color: tab === t.id ? "var(--text-primary, #1a1a1a)" : "var(--text-muted, #999)",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              fontSize: 11,
+              fontWeight: tab === t.id ? 600 : 400,
+              borderBottom: tab === t.id ? "2px solid var(--accent, #2563eb)" : "2px solid transparent",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+        <div style={{ flex: 1 }} />
+        <span
+          style={{
+            padding: "6px 12px",
+            color: "var(--text-muted, #999)",
+            fontSize: 10,
+          }}
+        >
+          {doc.blocks.length} blocks &middot; v{doc.version}
+        </span>
+      </div>
+      {/* Content */}
+      <pre
+        style={{
+          margin: 0,
+          padding: 12,
+          maxHeight: 240,
+          overflow: "auto",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          backgroundColor: "var(--bg-primary, #fff)",
+          color: "var(--text-secondary, #4a4a4a)",
+          lineHeight: 1.5,
+        }}
+      >
+        {tab === "markdown" && (markdown || "(empty document)")}
+        {tab === "json" && JSON.stringify(doc, null, 2)}
+        {tab === "selection" && (selection
+          ? JSON.stringify(selection, null, 2)
+          : "(no selection)"
+        )}
+      </pre>
+    </div>
+  );
+}
 
 /** Compute sequential numbers for numbered list items */
 function computeListNumbers(blocks: Block[]): Map<string, number> {

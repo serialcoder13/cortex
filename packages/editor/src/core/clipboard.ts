@@ -10,6 +10,7 @@ import { findBlock, findBlockIndex, splitContent, mergeAdjacentSpans } from "./d
 import { getOrderedSelection } from "./selection";
 import type { ApplyResult } from "./operations";
 import { insertText, deleteText } from "./operations";
+import { markdownToBlocks } from "../markdown/deserialize";
 
 /** Handle copy event — serialize selected content to clipboard */
 export function handleCopy(
@@ -64,8 +65,13 @@ export function handlePaste(
     }
   }
 
-  // For now, paste as plain text (HTML parsing can be added later)
-  // Split by newlines to create multiple blocks
+  // Smart markdown detection: if the pasted text looks like markdown,
+  // use the full markdown parser to preserve inline formatting.
+  if (looksLikeMarkdown(text)) {
+    return pasteMarkdownBlocks(currentDoc, currentSel, text);
+  }
+
+  // Plain text fallback — split by newlines to create multiple blocks
   const lines = text.split("\n");
 
   if (lines.length === 1) {
@@ -107,6 +113,60 @@ export function handlePaste(
 }
 
 // ---- Helpers ----
+
+/** Detect whether pasted text contains markdown formatting patterns */
+export function looksLikeMarkdown(text: string): boolean {
+  // Headings: # Heading
+  if (/^#{1,6}\s/m.test(text)) return true;
+  // Code fences: ```
+  if (/^```/m.test(text)) return true;
+  // Unordered lists: - item or * item
+  if (/^[-*]\s/m.test(text)) return true;
+  // Ordered lists: 1. item
+  if (/^\d+\.\s/m.test(text)) return true;
+  // Bold: **text**
+  if (/\*\*.+?\*\*/.test(text)) return true;
+  // Italic: *text* (but not bold)
+  if (/(?<!\*)\*(?!\*).+?(?<!\*)\*(?!\*)/.test(text)) return true;
+  // Links: [text](url)
+  if (/\[.+?\]\(.+?\)/.test(text)) return true;
+  // Images: ![alt](url)
+  if (/!\[.*?\]\(.+?\)/.test(text)) return true;
+
+  return false;
+}
+
+/** Paste text as parsed markdown blocks, inserted after the current block */
+function pasteMarkdownBlocks(
+  doc: EditorDocument,
+  sel: Selection,
+  text: string,
+): ApplyResult {
+  const parsedBlocks = markdownToBlocks(text);
+
+  if (parsedBlocks.length === 0) {
+    return { doc, ops: [], selection: null };
+  }
+
+  const currentIdx = findBlockIndex(doc, sel.focus.blockId);
+  if (currentIdx === -1) return { doc, ops: [], selection: null };
+
+  const blocks = [...doc.blocks];
+  // Insert all parsed blocks after the current block
+  blocks.splice(currentIdx + 1, 0, ...parsedBlocks);
+
+  const lastParsed = parsedBlocks.at(-1)!;
+  const offset = getPlainText(lastParsed.content).length;
+
+  return {
+    doc: { blocks, version: doc.version + 1 },
+    ops: [],
+    selection: {
+      anchor: { blockId: lastParsed.id, offset },
+      focus: { blockId: lastParsed.id, offset },
+    },
+  };
+}
 
 /** Serialize a selection to plain text and HTML */
 function serializeSelection(

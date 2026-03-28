@@ -4,6 +4,7 @@
 // ============================================================
 
 import type { Block, TextSpan, Mark } from "../core/types";
+import { serializeCustomComponent } from "../blocks/component-registry";
 
 /**
  * Convert an array of blocks to a markdown string.
@@ -93,9 +94,28 @@ function serializeBlock(block: Block, index: number, siblings: Block[]): string 
       return `[embed](${url})\n\n`;
     }
 
-    case "table":
-      // Tables are complex; for now output as plain text
+    case "table": {
+      const tableData: string[][] | undefined = block.props.tableData;
+      if (tableData && tableData.length > 0) {
+        const headerRow = tableData[0];
+        const headerLine = "| " + headerRow.join(" | ") + " |";
+        const separatorLine = "| " + headerRow.map(() => "---").join(" | ") + " |";
+        const bodyLines = tableData.slice(1).map(
+          (row) => "| " + row.join(" | ") + " |",
+        );
+        return [headerLine, separatorLine, ...bodyLines].join("\n") + "\n\n";
+      }
       return text + "\n\n";
+    }
+
+    case "mermaid": {
+      const code = block.props.mermaidCode || "";
+      return `\`\`\`mermaid\n${code}\n\`\`\`\n\n`;
+    }
+
+    case "customComponent": {
+      return serializeCustomComponent(block.props) + "\n\n";
+    }
 
     default:
       return text + "\n\n";

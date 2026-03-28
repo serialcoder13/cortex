@@ -20,7 +20,9 @@ export type BlockType =
   | "image"
   | "embed"
   | "divider"
-  | "table";
+  | "table"
+  | "mermaid"
+  | "customComponent";
 
 /** Inline formatting marks */
 export type MarkType =
@@ -65,6 +67,13 @@ export interface BlockProps {
   // table
   rows?: number;
   cols?: number;
+  tableData?: string[][]; // 2D array of cell contents
+  tableHeader?: boolean; // first row is header
+  // mermaid
+  mermaidCode?: string;
+  // custom component
+  componentName?: string;
+  componentProps?: Record<string, unknown>;
   // numberedList (computed at render time)
   number?: number;
   // generic extension point
