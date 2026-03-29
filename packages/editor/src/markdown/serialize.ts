@@ -235,6 +235,22 @@ function serializeSpan(span: TextSpan): string {
     text = `[${text}](${href})`;
   }
 
+  // Superscript / subscript (HTML tags, supported by many markdown renderers)
+  const isSuperscript = marks.some((m) => m.type === "superscript");
+  const isSubscript = marks.some((m) => m.type === "subscript");
+  if (isSuperscript) text = `<sup>${text}</sup>`;
+  if (isSubscript) text = `<sub>${text}</sub>`;
+
+  // Color and highlight (using span tags with style, compatible with HTML-in-markdown)
+  const colorMark = marks.find((m) => m.type === "color");
+  const highlightMark = marks.find((m) => m.type === "highlight");
+  if (highlightMark && highlightMark.attrs?.color && highlightMark.attrs.color !== "transparent") {
+    text = `<mark style="background-color:${highlightMark.attrs.color}">${text}</mark>`;
+  }
+  if (colorMark && colorMark.attrs?.color && colorMark.attrs.color !== "inherit") {
+    text = `<span style="color:${colorMark.attrs.color}">${text}</span>`;
+  }
+
   return text;
 }
 

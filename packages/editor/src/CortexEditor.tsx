@@ -22,7 +22,7 @@ import type {
   Selection as EditorSelection,
   TextSpan,
 } from "./core/types";
-import { createBlock, getPlainText, getTextLength } from "./core/types";
+import { createBlock, getPlainText, getTextLength, generateId } from "./core/types";
 import { createDocument, findBlock, insertBlockAfter, updateBlock } from "./core/document";
 import { handleKeyDown, handleBeforeInput } from "./core/input";
 import { readSelection, writeSelection } from "./core/selection";
@@ -35,7 +35,8 @@ import { SlashCommandMenu } from "./features/slash-command";
 import { FloatingToolbar } from "./features/toolbar";
 import { blocksToMarkdown } from "./markdown/serialize";
 import { FindReplaceBar, findInDocument, type FindMatch } from "./features/find-replace";
-import { GripVertical } from "lucide-react";
+import { BlockMenu } from "./features/block-menu";
+import { GripVertical, Plus, Trash2, Copy, ArrowUpDown, Type as TypeIcon, Heading1, Heading2, Heading3, List, ListOrdered, CheckSquare, Code, Quote, Lightbulb } from "lucide-react";
 
 // ---- Public API Types ----
 
@@ -137,11 +138,19 @@ function getCaretRect(): DOMRect | null {
 function DragHandle({
   editorRef,
   onDragStart,
+  onAddBlock,
+  onOpenMenu,
 }: Readonly<{
   editorRef: React.RefObject<HTMLDivElement | null>;
   onDragStart: (e: React.DragEvent, id: string) => void;
+  onAddBlock: (afterBlockId: string) => void;
+  onOpenMenu: (blockId: string, position: { x: number; y: number }) => void;
 }>) {
-  const [hovered, setHovered] = useState<{ blockId: string; top: number } | null>(null);
+  // Track the current block being hovered (null = not hovering any block)
+  const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
+  // Track the animated top position (persists even when hiding)
+  const [top, setTop] = useState(0);
+  const [visible, setVisible] = useState(false);
   const handleRef = useRef<HTMLDivElement>(null);
   const isOverHandle = useRef(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -155,37 +164,38 @@ function DragHandle({
     const onMouseMove = (e: MouseEvent) => {
       clearTimeout(hideTimer.current);
 
-      // Check if mouse is over the handle itself
       if (handleRef.current?.contains(e.target as Node)) return;
 
       const blockEls = editor.querySelectorAll("[data-block-id]");
-      let found: { blockId: string; top: number } | null = null;
 
       for (const blockEl of blockEls) {
         const rect = (blockEl as HTMLElement).getBoundingClientRect();
         if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
           const containerRect = container.getBoundingClientRect();
-          found = {
-            blockId: blockEl.getAttribute("data-block-id")!,
-            top: rect.top - containerRect.top + 4,
-          };
-          break;
+          const newTop = rect.top - containerRect.top + 4;
+          const blockId = blockEl.getAttribute("data-block-id")!;
+          setActiveBlockId(blockId);
+          setTop(newTop);
+          setVisible(true);
+          return;
         }
       }
-      setHovered(found);
+      // Mouse is between blocks or outside — keep handle at last position but start fade
+      if (!isOverHandle.current) {
+        hideTimer.current = setTimeout(() => {
+          if (!isOverHandle.current) setVisible(false);
+        }, 200);
+      }
     };
 
     const onMouseLeave = (e: MouseEvent) => {
-      // Don't hide if mouse moved to the drag handle
       if (handleRef.current?.contains(e.relatedTarget as Node)) return;
       if (isOverHandle.current) return;
-      // Small delay to allow moving to the handle
       hideTimer.current = setTimeout(() => {
-        if (!isOverHandle.current) setHovered(null);
-      }, 150);
+        if (!isOverHandle.current) setVisible(false);
+      }, 200);
     };
 
-    // Listen on document for moves (so handle area outside container is covered)
     document.addEventListener("mousemove", onMouseMove);
     container.addEventListener("mouseleave", onMouseLeave);
     return () => {
@@ -195,39 +205,100 @@ function DragHandle({
     };
   }, [editorRef]);
 
-  if (!hovered) return null;
+  const btnStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 22,
+    height: 22,
+    borderRadius: 4,
+    border: "none",
+    background: "none",
+    color: "var(--text-muted, #999)",
+    cursor: "pointer",
+    padding: 0,
+    transition: "background-color 100ms, color 100ms",
+  };
 
   return (
     <div
       ref={handleRef}
-      draggable
-      onDragStart={(e) => onDragStart(e, hovered.blockId)}
       onMouseEnter={() => {
         isOverHandle.current = true;
         clearTimeout(hideTimer.current);
       }}
       onMouseLeave={() => {
         isOverHandle.current = false;
-        hideTimer.current = setTimeout(() => setHovered(null), 150);
+        hideTimer.current = setTimeout(() => setVisible(false), 200);
       }}
       style={{
         position: "absolute",
-        left: -32,
-        top: hovered.top,
+        left: -56,
+        top,
         display: "flex",
-        width: 24,
-        height: 24,
         alignItems: "center",
-        justifyContent: "center",
-        borderRadius: 4,
-        color: "var(--text-muted, #999)",
-        cursor: "grab",
+        gap: 2,
         zIndex: 10,
-        transition: "opacity 100ms",
+        opacity: visible ? 1 : 0,
+        transition: "top 500ms ease-out, opacity 500ms ease",
+        pointerEvents: visible ? "auto" : "none",
       }}
-      aria-label="Drag to reorder"
     >
-      <GripVertical size={14} />
+      {/* Plus button — add block after */}
+      <button
+        type="button"
+        style={btnStyle}
+        title="Add block below"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => { if (activeBlockId) onAddBlock(activeBlockId); }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = "var(--bg-hover, #f0f0f0)";
+          e.currentTarget.style.color = "var(--text-primary, #1a1a1a)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "transparent";
+          e.currentTarget.style.color = "var(--text-muted, #999)";
+        }}
+      >
+        <Plus size={14} />
+      </button>
+
+      {/* Grip handle — drag to reorder, click to open menu */}
+      <div
+        draggable
+        onDragStart={(e) => {
+          if (!activeBlockId) return;
+          const editor = editorRef.current;
+          if (editor) {
+            const blockEl = editor.querySelector(`[data-block-id="${activeBlockId}"]`);
+            if (blockEl) {
+              const rect = blockEl.getBoundingClientRect();
+              e.dataTransfer.setDragImage(blockEl, e.clientX - rect.left, e.clientY - rect.top);
+            }
+          }
+          onDragStart(e, activeBlockId);
+        }}
+        onClick={(e) => {
+          if (activeBlockId) {
+            onOpenMenu(activeBlockId, { x: e.clientX, y: e.clientY });
+          }
+        }}
+        style={{
+          ...btnStyle,
+          cursor: "grab",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = "var(--bg-hover, #f0f0f0)";
+          e.currentTarget.style.color = "var(--text-primary, #1a1a1a)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "transparent";
+          e.currentTarget.style.color = "var(--text-muted, #999)";
+        }}
+        aria-label="Drag to reorder or click for options"
+      >
+        <GripVertical size={14} />
+      </div>
     </div>
   );
 }
@@ -291,6 +362,13 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       open: false,
       showReplace: false,
     });
+
+    // Block context menu state
+    const [blockMenu, setBlockMenu] = useState<{
+      open: boolean;
+      blockId: string;
+      position: { x: number; y: number };
+    }>({ open: false, blockId: "", position: { x: 0, y: 0 } });
 
     // ---- Idle timer ----
     const resetIdleTimer = useCallback(() => {
@@ -586,6 +664,12 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       const domSel = window.getSelection();
       if (!domSel || !rootRef.current.contains(domSel.anchorNode)) return;
 
+      // Skip if selection is inside a nested contentEditable (e.g., table cell)
+      const anchorEl = domSel.anchorNode instanceof HTMLElement
+        ? domSel.anchorNode
+        : domSel.anchorNode?.parentElement;
+      if (anchorEl?.closest?.("[contenteditable='false']")) return;
+
       const sel = readSelection(rootRef.current, docRef.current);
       if (sel) {
         // Skip update if selection hasn't changed (prevents loops)
@@ -727,6 +811,12 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
 
       const onNativeBeforeInput = (e: Event) => {
         if (isComposing.current) return;
+
+        // Skip if the event target is inside a nested contentEditable={false} subtree
+        // (e.g., table cells have their own contentEditable and handle input themselves)
+        const target = e.target as HTMLElement;
+        if (target !== root && target.closest?.("[contenteditable='false']")) return;
+
         const sel = selectionRef.current;
         if (!sel) return;
 
@@ -949,6 +1039,22 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       return () => root.removeEventListener("input", update);
     }, [readOnly, doc.blocks.length]);
 
+    // ---- Listen for table cell updates ----
+    useEffect(() => {
+      const handleTableUpdate = (e: Event) => {
+        const { blockId, tableData } = (e as CustomEvent).detail;
+        const newDoc = updateBlock(docRef.current, blockId, (b) => ({
+          ...b,
+          props: { ...b.props, tableData },
+        }));
+        setDoc(newDoc);
+        docRef.current = newDoc;
+        onChange?.(newDoc);
+      };
+      globalThis.addEventListener("cortex-table-update", handleTableUpdate);
+      return () => globalThis.removeEventListener("cortex-table-update", handleTableUpdate);
+    }, [onChange]);
+
     // ---- Render ----
     return (
       <div
@@ -1046,6 +1152,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
                     ? { ...block, props: { ...block.props, number: numberedBlocks.get(block.id) ?? 1 } }
                     : block
                 }
+                readOnly={readOnly}
                 onToggleTodo={onToggleTodo}
                 onToggleCollapse={onToggleCollapse}
               />
@@ -1067,11 +1174,73 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           </div>
         )}
 
-        {/* Drag handle — single handle that follows the hovered block */}
+        {/* Drag handle — plus button + grip (click for menu, drag to reorder) */}
         {!readOnly && (
           <DragHandle
             editorRef={rootRef}
             onDragStart={handleDragStart}
+            onAddBlock={(afterBlockId) => {
+              const block = createBlock("paragraph");
+              const newDoc = insertBlockAfter(docRef.current, afterBlockId, block);
+              setDoc(newDoc);
+              docRef.current = newDoc;
+              setSelection({ anchor: { blockId: block.id, offset: 0 }, focus: { blockId: block.id, offset: 0 } });
+              selectionRef.current = { anchor: { blockId: block.id, offset: 0 }, focus: { blockId: block.id, offset: 0 } };
+              onChange?.(newDoc);
+              requestAnimationFrame(() => rootRef.current?.focus());
+            }}
+            onOpenMenu={(blockId, position) => {
+              setBlockMenu({ open: true, blockId, position });
+            }}
+          />
+        )}
+
+        {/* Block context menu */}
+        {blockMenu.open && (
+          <BlockMenu
+            position={blockMenu.position}
+            blockId={blockMenu.blockId}
+            blockType={(findBlock(docRef.current, blockMenu.blockId)?.type ?? "paragraph") as any}
+            onClose={() => setBlockMenu({ open: false, blockId: "", position: { x: 0, y: 0 } })}
+            onDelete={(id) => {
+              if (docRef.current.blocks.length > 1) {
+                const result = deleteBlockOp(docRef.current, id);
+                if (result.doc !== docRef.current) apply(result);
+              }
+              setBlockMenu({ open: false, blockId: "", position: { x: 0, y: 0 } });
+            }}
+            onDuplicate={(id) => {
+              const block = findBlock(docRef.current, id);
+              if (block) {
+                const dup = { ...block, id: generateId(), children: [...block.children] };
+                const newDoc = insertBlockAfter(docRef.current, id, dup);
+                setDoc(newDoc);
+                docRef.current = newDoc;
+                onChange?.(newDoc);
+              }
+              setBlockMenu({ open: false, blockId: "", position: { x: 0, y: 0 } });
+            }}
+            onTurnInto={(id, newType) => {
+              const result = setBlockTypeOp(docRef.current, id, newType);
+              if (result.doc !== docRef.current) apply(result);
+              setBlockMenu({ open: false, blockId: "", position: { x: 0, y: 0 } });
+            }}
+            onMoveUp={(id) => {
+              const idx = docRef.current.blocks.findIndex(b => b.id === id);
+              if (idx > 0) {
+                const result = moveBlockOp(docRef.current, id, idx - 1);
+                if (result.doc !== docRef.current) apply(result);
+              }
+              setBlockMenu({ open: false, blockId: "", position: { x: 0, y: 0 } });
+            }}
+            onMoveDown={(id) => {
+              const idx = docRef.current.blocks.findIndex(b => b.id === id);
+              if (idx < docRef.current.blocks.length - 1) {
+                const result = moveBlockOp(docRef.current, id, idx + 2);
+                if (result.doc !== docRef.current) apply(result);
+              }
+              setBlockMenu({ open: false, blockId: "", position: { x: 0, y: 0 } });
+            }}
           />
         )}
 

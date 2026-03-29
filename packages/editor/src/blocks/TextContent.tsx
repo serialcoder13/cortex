@@ -84,6 +84,30 @@ function SpanRenderer({ span }: { span: TextSpan }) {
           </a>
         );
         break;
+      case "superscript":
+        element = <sup>{element}</sup>;
+        break;
+      case "subscript":
+        element = <sub>{element}</sub>;
+        break;
+      case "color":
+        element = (
+          <span style={{ color: mark.attrs?.color ?? "inherit" }}>
+            {element}
+          </span>
+        );
+        break;
+      case "highlight":
+        element = (
+          <span style={{
+            backgroundColor: mark.attrs?.color ?? "transparent",
+            borderRadius: 2,
+            padding: "1px 0",
+          }}>
+            {element}
+          </span>
+        );
+        break;
     }
   }
 

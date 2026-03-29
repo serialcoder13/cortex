@@ -6,17 +6,19 @@
 // ============================================================
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Plus, MoreHorizontal, MoreVertical, Trash2, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ArrowDownAZ, ArrowUpAZ, Copy, XSquare } from "lucide-react";
 import type { Block } from "../core/types";
 import { TextContent } from "./TextContent";
 import { getRegisteredComponent } from "./component-registry";
 
 interface BlockRendererProps {
   block: Block;
+  readOnly?: boolean;
   onToggleTodo?: (blockId: string) => void;
   onToggleCollapse?: (blockId: string) => void;
 }
 
-export function BlockRenderer({ block, onToggleTodo, onToggleCollapse }: BlockRendererProps) {
+export function BlockRenderer({ block, readOnly = false, onToggleTodo, onToggleCollapse }: BlockRendererProps) {
   switch (block.type) {
     case "paragraph":
       return <ParagraphBlock block={block} />;
@@ -31,7 +33,7 @@ export function BlockRenderer({ block, onToggleTodo, onToggleCollapse }: BlockRe
     case "numberedList":
       return <NumberedListBlock block={block} />;
     case "todo":
-      return <TodoBlock block={block} onToggle={onToggleTodo} />;
+      return <TodoBlock block={block} readOnly={readOnly} onToggle={onToggleTodo} />;
     case "codeBlock":
       return <CodeBlock block={block} />;
     case "quote":
@@ -43,9 +45,9 @@ export function BlockRenderer({ block, onToggleTodo, onToggleCollapse }: BlockRe
     case "divider":
       return <DividerBlock />;
     case "image":
-      return <ImageBlock block={block} />;
+      return <ImageBlock block={block} readOnly={readOnly} />;
     case "table":
-      return <TableBlock block={block} />;
+      return <TableBlock block={block} readOnly={readOnly} />;
     case "mermaid":
       return <MermaidBlock block={block} />;
     case "customComponent":
@@ -81,9 +83,9 @@ function HeadingBlock({ block, level }: { block: Block; level: 1 | 2 | 3 }) {
 
 function BulletListBlock({ block }: { block: Block }) {
   return (
-    <div style={{ display: "flex", gap: 8, paddingLeft: 6 }}>
+    <div style={{ display: "flex", gap: 6, paddingLeft: 4, alignItems: "baseline" }}>
       <span
-        style={{ marginTop: "0.35em", userSelect: "none", color: "var(--text-muted)" }}
+        style={{ userSelect: "none", color: "var(--text-muted, #999)", lineHeight: 1.625, fontSize: "0.8em" }}
         contentEditable={false}
       >
         •
@@ -98,10 +100,9 @@ function BulletListBlock({ block }: { block: Block }) {
 function NumberedListBlock({ block }: { block: Block }) {
   const number = block.props.number ?? 1;
   return (
-    <div style={{ display: "flex", gap: 8, paddingLeft: 6 }}>
+    <div style={{ display: "flex", gap: 6, paddingLeft: 4, alignItems: "baseline" }}>
       <span
         style={{
-          marginTop: "0.05em",
           minWidth: "1.2em",
           textAlign: "right",
           userSelect: "none",
@@ -118,16 +119,17 @@ function NumberedListBlock({ block }: { block: Block }) {
   );
 }
 
-function TodoBlock({ block, onToggle }: { block: Block; onToggle?: (id: string) => void }) {
+function TodoBlock({ block, readOnly, onToggle }: { block: Block; readOnly?: boolean; onToggle?: (id: string) => void }) {
   const checked = block.props.checked ?? false;
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
+      if (readOnly) return;
       e.preventDefault();
       e.stopPropagation();
       onToggle?.(block.id);
     },
-    [block.id, onToggle],
+    [block.id, onToggle, readOnly],
   );
 
   return (
@@ -344,7 +346,7 @@ function DividerBlock() {
   );
 }
 
-function ImageBlock({ block }: { block: Block }) {
+function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
   const src = block.props.src;
   const alt = block.props.alt ?? "";
   const caption = block.props.caption;
@@ -450,69 +452,748 @@ function ImageBlock({ block }: { block: Block }) {
   );
 }
 
-function TableBlock({ block }: { block: Block }) {
-  const tableData = block.props.tableData ?? [
+/** Individual table cell — manages its own DOM text independently of React state */
+function TableCell({
+  value,
+  isHeader,
+  readOnly,
+  onCommit,
+  onFocusCell,
+  onTab,
+}: {
+  value: string;
+  isHeader: boolean;
+  readOnly?: boolean;
+  onCommit: (text: string) => void;
+  onFocusCell: () => void;
+  onTab?: (forward: boolean) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const committedRef = useRef(value);
+
+  useEffect(() => {
+    if (ref.current && ref.current.textContent !== value && document.activeElement !== ref.current) {
+      ref.current.textContent = value;
+      committedRef.current = value;
+    }
+  }, [value]);
+
+  return (
+    <div
+      ref={ref}
+      contentEditable={!readOnly}
+      suppressContentEditableWarning
+      onClick={(e) => {
+        e.stopPropagation();
+        ref.current?.focus();
+        onFocusCell();
+      }}
+      onFocus={(e) => {
+        e.stopPropagation();
+        onFocusCell();
+      }}
+      onBlur={() => {
+        const text = ref.current?.textContent ?? "";
+        if (text !== committedRef.current) {
+          committedRef.current = text;
+          onCommit(text);
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Tab") {
+          e.preventDefault();
+          e.stopPropagation();
+          // Commit current cell
+          const text = ref.current?.textContent ?? "";
+          if (text !== committedRef.current) {
+            committedRef.current = text;
+            onCommit(text);
+          }
+          onTab?.(!e.shiftKey);
+          return;
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          ref.current?.blur();
+        }
+        e.stopPropagation();
+      }}
+      onBeforeInput={(e) => e.stopPropagation()}
+      style={{
+        padding: "8px 12px",
+        outline: "none",
+        fontWeight: isHeader ? 600 : "normal",
+        minHeight: "1.5em",
+        lineHeight: 1.5,
+        cursor: "text",
+      }}
+    />
+  );
+}
+
+function TableBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
+  const tableRef = useRef<HTMLDivElement>(null);
+  const defaultData: string[][] = [
     ["", "", ""],
     ["", "", ""],
     ["", "", ""],
   ];
-  const hasHeader = block.props.tableHeader ?? false;
+  const [data, setData] = useState<string[][]>(() =>
+    block.props.tableData && (block.props.tableData as string[][]).length > 0
+      ? (block.props.tableData as string[][])
+      : defaultData,
+  );
+  const hasHeader = block.props.tableHeader ?? true;
+  const dataRef = useRef(data);
+  dataRef.current = data;
 
-  const headerRow = hasHeader ? tableData[0] : null;
-  const bodyRows = hasHeader ? tableData.slice(1) : tableData;
+  // Active cell tracking (for row/column highlighting)
+  const [activeCell, setActiveCell] = useState<{ row: number; col: number } | null>(null);
+
+  // Dropdown state: { type: "col" | "row", index: number } | null
+  const [menu, setMenu] = useState<{ type: "col" | "row"; index: number } | null>(null);
+  const [hoveredRow, setHoveredRow] = useState<number | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Note: we do NOT sync from block.props.tableData on every change,
+  // because that would race with local cell edits. The local state is the
+  // source of truth. The initial state is set from props in useState above.
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenu(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [menu]);
+
+  const dispatchUpdate = useCallback(
+    (newData: string[][]) => {
+      setData(newData);
+      globalThis.dispatchEvent(
+        new CustomEvent("cortex-table-update", {
+          detail: { blockId: block.id, tableData: newData },
+        }),
+      );
+    },
+    [block.id],
+  );
+
+  const handleCellInput = useCallback(
+    (rowIdx: number, colIdx: number, value: string) => {
+      // Update the ref immediately (no React re-render)
+      const current = dataRef.current;
+      if (current[rowIdx]) {
+        current[rowIdx] = [...current[rowIdx]];
+        current[rowIdx][colIdx] = value;
+      }
+      // Dispatch to model without triggering React state update
+      // (avoids re-rendering cells and losing focus)
+      const newData = current.map((r) => [...r]);
+      globalThis.dispatchEvent(
+        new CustomEvent("cortex-table-update", {
+          detail: { blockId: block.id, tableData: newData },
+        }),
+      );
+    },
+    [block.id],
+  );
+
+  // Column operations
+  const insertColumn = useCallback(
+    (colIdx: number, direction: "left" | "right") => {
+      const insertAt = direction === "left" ? colIdx : colIdx + 1;
+      const newData = data.map((row) => {
+        const r = [...row];
+        r.splice(insertAt, 0, "");
+        return r;
+      });
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  const deleteColumn = useCallback(
+    (colIdx: number) => {
+      if (data[0].length <= 1) return; // Don't delete last column
+      const newData = data.map((row) => {
+        const r = [...row];
+        r.splice(colIdx, 1);
+        return r;
+      });
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  // Row operations
+  const insertRow = useCallback(
+    (rowIdx: number, direction: "above" | "below") => {
+      const insertAt = direction === "above" ? rowIdx : rowIdx + 1;
+      const cols = data[0]?.length ?? 3;
+      const newRow = Array(cols).fill("");
+      const newData = [...data];
+      newData.splice(insertAt, 0, newRow);
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  const deleteRow = useCallback(
+    (rowIdx: number) => {
+      if (data.length <= 1) return; // Don't delete last row
+      const newData = [...data];
+      newData.splice(rowIdx, 1);
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  // Move column left/right
+  const moveColumn = useCallback(
+    (colIdx: number, direction: "left" | "right") => {
+      const targetIdx = direction === "left" ? colIdx - 1 : colIdx + 1;
+      if (targetIdx < 0 || targetIdx >= (data[0]?.length ?? 0)) return;
+      const newData = data.map((row) => {
+        const r = [...row];
+        [r[colIdx], r[targetIdx]] = [r[targetIdx], r[colIdx]];
+        return r;
+      });
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  // Move row up/down
+  const moveRow = useCallback(
+    (rowIdx: number, direction: "up" | "down") => {
+      const targetIdx = direction === "up" ? rowIdx - 1 : rowIdx + 1;
+      if (targetIdx < 0 || targetIdx >= data.length) return;
+      const newData = data.map((r) => [...r]);
+      [newData[rowIdx], newData[targetIdx]] = [newData[targetIdx], newData[rowIdx]];
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  // Sort all data rows by a column
+  const sortByColumn = useCallback(
+    (colIdx: number, direction: "asc" | "desc") => {
+      const startIdx = hasHeader ? 1 : 0;
+      const headerRows = data.slice(0, startIdx);
+      const bodyRows = data.slice(startIdx).map((r) => [...r]);
+      bodyRows.sort((a, b) => {
+        const cmp = (a[colIdx] ?? "").localeCompare(b[colIdx] ?? "");
+        return direction === "asc" ? cmp : -cmp;
+      });
+      dispatchUpdate([...headerRows, ...bodyRows]);
+      setMenu(null);
+    },
+    [data, hasHeader, dispatchUpdate],
+  );
+
+  // Sort cells within a single row
+  const sortRow = useCallback(
+    (rowIdx: number, direction: "asc" | "desc") => {
+      const newData = data.map((r) => [...r]);
+      const sorted = [...newData[rowIdx]].sort((a, b) => {
+        const cmp = a.localeCompare(b);
+        return direction === "asc" ? cmp : -cmp;
+      });
+      newData[rowIdx] = sorted;
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  // Clear all cells in a column
+  const clearColumn = useCallback(
+    (colIdx: number) => {
+      const newData = data.map((r) => {
+        const row = [...r];
+        row[colIdx] = "";
+        return row;
+      });
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  // Clear all cells in a row
+  const clearRow = useCallback(
+    (rowIdx: number) => {
+      const newData = data.map((r) => [...r]);
+      newData[rowIdx] = newData[rowIdx].map(() => "");
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  // Duplicate a column (insert copy to the right)
+  const duplicateColumn = useCallback(
+    (colIdx: number) => {
+      const newData = data.map((row) => {
+        const r = [...row];
+        r.splice(colIdx + 1, 0, r[colIdx]);
+        return r;
+      });
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  // Duplicate a row (insert copy below)
+  const duplicateRow = useCallback(
+    (rowIdx: number) => {
+      const newData = data.map((r) => [...r]);
+      newData.splice(rowIdx + 1, 0, [...newData[rowIdx]]);
+      dispatchUpdate(newData);
+      setMenu(null);
+    },
+    [data, dispatchUpdate],
+  );
+
+  const addRow = useCallback(() => {
+    const cols = data[0]?.length ?? 3;
+    const newRow = Array(cols).fill("");
+    dispatchUpdate([...data, newRow]);
+  }, [data, dispatchUpdate]);
+
+  const addColumn = useCallback(() => {
+    const newData = data.map((row) => [...row, ""]);
+    dispatchUpdate(newData);
+  }, [data, dispatchUpdate]);
+
+  const numCols = data[0]?.length ?? 0;
+
+  const dropdownStyles: React.CSSProperties = {
+    position: "absolute",
+    backgroundColor: "var(--bg-primary, white)",
+    border: "1px solid var(--border-primary, #e5e5e5)",
+    borderRadius: 8,
+    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+    padding: "4px 0",
+    zIndex: 100,
+    minWidth: 160,
+  };
+
+  const menuItemStyles: React.CSSProperties = {
+    padding: "6px 12px",
+    cursor: "pointer",
+    fontSize: 13,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    color: "var(--text-primary, #333)",
+    background: "none",
+    border: "none",
+    width: "100%",
+    textAlign: "left",
+  };
+
+  const menuItemDangerStyles: React.CSSProperties = {
+    ...menuItemStyles,
+    color: "var(--text-danger, #dc2626)",
+  };
 
   return (
-    <div style={{ margin: "8px 0" }} contentEditable={false}>
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          borderColor: "var(--border-primary)",
-        }}
-      >
-        {headerRow && (
-          <thead>
-            <tr>
-              {headerRow.map((cell, i) => (
-                <th
-                  key={i}
-                  contentEditable={false}
+    <div
+      ref={tableRef}
+      style={{ margin: "8px 0", position: "relative" }}
+      contentEditable={false}
+      onBlur={(e) => {
+        // Clear active cell when focus leaves the table entirely
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setActiveCell(null);
+        }
+      }}
+    >
+      {/* Wrapper with table + add-column button side by side */}
+      <div style={{ display: "flex", alignItems: "stretch" }}>
+        <div style={{ flex: 1, overflow: "visible" }}>
+          {/* Column header buttons row (hidden in readOnly) */}
+          {!readOnly && <div style={{ display: "flex", paddingLeft: 28 }}>
+            {data[0]?.map((_col, ci) => (
+              <div
+                key={ci}
+                style={{
+                  minWidth: 80,
+                  flex: 1,
+                  display: "flex",
+                  justifyContent: "center",
+                  position: "relative",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenu(menu?.type === "col" && menu.index === ci ? null : { type: "col", index: ci });
+                  }}
                   style={{
-                    border: "1px solid var(--border-primary)",
-                    padding: "6px 12px",
-                    textAlign: "left",
-                    fontWeight: 600,
-                    backgroundColor: "var(--bg-secondary)",
-                    color: "var(--text-primary)",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    color: "var(--text-muted, #999)",
+                    fontSize: 14,
+                    lineHeight: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    opacity: activeCell?.col === ci || (menu?.type === "col" && menu.index === ci) ? 1 : 0,
+                    transition: "opacity 150ms",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.opacity = "1";
+                    (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f0f0f0)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (activeCell?.col !== ci && !(menu?.type === "col" && menu.index === ci)) {
+                      (e.currentTarget as HTMLElement).style.opacity = "0";
+                    }
+                    (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+                  }}
+                  title="Column options"
+                >
+                  <MoreHorizontal size={14} />
+                </button>
+                {/* Column dropdown menu */}
+                {menu?.type === "col" && menu.index === ci && (
+                  <div ref={menuRef} style={{ ...dropdownStyles, top: "100%", left: "50%", transform: "translateX(-50%)" }}>
+                    <button
+                      type="button"
+                      style={{ ...menuItemStyles, ...(ci === 0 ? { opacity: 0.4, cursor: "default" } : {}) }}
+                      onMouseEnter={(e) => { if (ci > 0) (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                      onMouseDown={(e) => { e.preventDefault(); if (ci > 0) moveColumn(ci, "left"); }}
+                    >
+                      <ArrowLeft size={14} /> Move column left
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...menuItemStyles, ...(ci === numCols - 1 ? { opacity: 0.4, cursor: "default" } : {}) }}
+                      onMouseEnter={(e) => { if (ci < numCols - 1) (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                      onMouseDown={(e) => { e.preventDefault(); if (ci < numCols - 1) moveColumn(ci, "right"); }}
+                    >
+                      <ArrowRight size={14} /> Move column right
+                    </button>
+                    <div style={{ height: 1, backgroundColor: "var(--border-primary, #e5e5e5)", margin: "4px 0" }} />
+                    <button
+                      type="button"
+                      style={menuItemStyles}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                      onMouseDown={(e) => { e.preventDefault(); insertColumn(ci, "left"); }}
+                    >
+                      <Plus size={14} /> Insert column left
+                    </button>
+                    <button
+                      type="button"
+                      style={menuItemStyles}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                      onMouseDown={(e) => { e.preventDefault(); insertColumn(ci, "right"); }}
+                    >
+                      <Plus size={14} /> Insert column right
+                    </button>
+                    <div style={{ height: 1, backgroundColor: "var(--border-primary, #e5e5e5)", margin: "4px 0" }} />
+                    <button
+                      type="button"
+                      style={menuItemStyles}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                      onMouseDown={(e) => { e.preventDefault(); sortByColumn(ci, "asc"); }}
+                    >
+                      <ArrowDownAZ size={14} /> Sort column A-Z
+                    </button>
+                    <button
+                      type="button"
+                      style={menuItemStyles}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                      onMouseDown={(e) => { e.preventDefault(); sortByColumn(ci, "desc"); }}
+                    >
+                      <ArrowUpAZ size={14} /> Sort column Z-A
+                    </button>
+                    <div style={{ height: 1, backgroundColor: "var(--border-primary, #e5e5e5)", margin: "4px 0" }} />
+                    <button
+                      type="button"
+                      style={menuItemStyles}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                      onMouseDown={(e) => { e.preventDefault(); clearColumn(ci); }}
+                    >
+                      <XSquare size={14} /> Clear column contents
+                    </button>
+                    <div style={{ height: 1, backgroundColor: "var(--border-primary, #e5e5e5)", margin: "4px 0" }} />
+                    <button
+                      type="button"
+                      style={menuItemStyles}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                      onMouseDown={(e) => { e.preventDefault(); duplicateColumn(ci); }}
+                    >
+                      <Copy size={14} /> Duplicate column
+                    </button>
+                    {numCols > 1 && (<>
+                      <div style={{ height: 1, backgroundColor: "var(--border-primary, #e5e5e5)", margin: "4px 0" }} />
+                      <button
+                        type="button"
+                        style={menuItemDangerStyles}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                        onMouseDown={(e) => { e.preventDefault(); deleteColumn(ci); }}
+                      >
+                        <Trash2 size={14} /> Delete column
+                      </button>
+                    </>)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>}
+
+          {/* Table */}
+          <div style={{ display: "flex" }}>
+            {/* Row handle buttons column (hidden in readOnly) */}
+            {!readOnly && <div style={{ display: "flex", flexDirection: "column", justifyContent: "stretch" }}>
+              {data.map((_row, ri) => (
+                <div
+                  key={ri}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 28,
+                    flex: 1,
+                    position: "relative",
                   }}
                 >
-                  {cell}
-                </th>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenu(menu?.type === "row" && menu.index === ri ? null : { type: "row", index: ri });
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      padding: "2px 4px",
+                      borderRadius: 4,
+                      color: "var(--text-muted, #999)",
+                      fontSize: 14,
+                      lineHeight: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      opacity: activeCell?.row === ri || hoveredRow === ri || (menu?.type === "row" && menu.index === ri) ? 1 : 0,
+                      transition: "opacity 150ms",
+                    }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f0f0f0)"; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                    title="Row options"
+                  >
+                    <MoreVertical size={14} />
+                  </button>
+                  {/* Row dropdown menu */}
+                  {menu?.type === "row" && menu.index === ri && (
+                    <div ref={menuRef} style={{ ...dropdownStyles, top: "50%", left: "100%", transform: "translateY(-50%)" }}>
+                      <button
+                        type="button"
+                        style={menuItemStyles}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                        onClick={() => insertRow(ri, "above")}
+                      >
+                        <Plus size={14} /> Insert row above
+                      </button>
+                      <button
+                        type="button"
+                        style={menuItemStyles}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                        onClick={() => insertRow(ri, "below")}
+                      >
+                        <Plus size={14} /> Insert row below
+                      </button>
+                      {data.length > 1 && (
+                        <button
+                          type="button"
+                          style={menuItemDangerStyles}
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--bg-hover, #f8f8f8)"; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+                          onClick={() => deleteRow(ri)}
+                        >
+                          <Trash2 size={14} /> Delete row
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               ))}
-            </tr>
-          </thead>
-        )}
-        <tbody>
-          {bodyRows.map((row, ri) => (
-            <tr key={ri}>
-              {row.map((cell, ci) => (
-                <td
-                  key={ci}
-                  contentEditable={false}
-                  style={{
-                    border: "1px solid var(--border-primary)",
-                    padding: "6px 12px",
-                    textAlign: "left",
-                    color: "var(--text-primary)",
-                  }}
-                >
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+            </div>}
+
+            {/* Actual table */}
+            <table
+              style={{
+                borderCollapse: "collapse",
+                border: "1px solid var(--border-primary, #e5e5e5)",
+                width: "100%",
+              }}
+            >
+              <tbody>
+                {data.map((row, ri) => {
+                  const isHeader = hasHeader && ri === 0;
+                  return (
+                    <tr
+                      key={ri}
+                      onMouseEnter={() => setHoveredRow(ri)}
+                      onMouseLeave={() => setHoveredRow(null)}
+                      style={{
+                        backgroundColor:
+                          isHeader
+                            ? "var(--bg-secondary, #f5f5f5)"
+                            : hoveredRow === ri
+                              ? "var(--bg-hover, #f8f8f8)"
+                              : "transparent",
+                        transition: "background-color 100ms",
+                      }}
+                    >
+                      {row.map((cell, ci) => (
+                        <td
+                          key={ci}
+                          onClick={(e) => {
+                            // If click lands on td (not inner div), focus the cell div
+                            const cellDiv = (e.currentTarget as HTMLElement).querySelector("[contenteditable='true']") as HTMLElement;
+                            if (cellDiv && e.target === e.currentTarget) {
+                              cellDiv.focus();
+                              setActiveCell({ row: ri, col: ci });
+                            }
+                          }}
+                          style={{
+                            border: "1px solid var(--border-primary, #e5e5e5)",
+                            padding: 0,
+                            minWidth: 80,
+                            verticalAlign: "top",
+                            backgroundColor:
+                              activeCell && (activeCell.row === ri || activeCell.col === ci)
+                                ? "rgba(37, 99, 235, 0.06)"
+                                : undefined,
+                            outline: activeCell?.row === ri && activeCell?.col === ci
+                              ? "2px solid rgba(37, 99, 235, 0.4)"
+                              : undefined,
+                            outlineOffset: -2,
+                          }}
+                        >
+                          <TableCell
+                            key={`${ri}-${ci}`}
+                            value={cell}
+                            isHeader={isHeader}
+                            readOnly={readOnly}
+                            onCommit={(text) => handleCellInput(ri, ci, text)}
+                            onFocusCell={() => setActiveCell({ row: ri, col: ci })}
+                            onTab={(forward) => {
+                              // Navigate to next/prev cell
+                              const numCols2 = data[0]?.length ?? 0;
+                              let nextRow = ri;
+                              let nextCol = forward ? ci + 1 : ci - 1;
+                              if (nextCol >= numCols2) { nextRow++; nextCol = 0; }
+                              if (nextCol < 0) { nextRow--; nextCol = numCols2 - 1; }
+                              if (nextRow >= 0 && nextRow < data.length) {
+                                setActiveCell({ row: nextRow, col: nextCol });
+                                // Focus the target cell
+                                setTimeout(() => {
+                                  const cells = tableRef.current?.querySelectorAll("td");
+                                  const targetIdx = nextRow * numCols2 + nextCol;
+                                  const targetTd = cells?.[targetIdx];
+                                  const cellDiv = targetTd?.querySelector("[contenteditable]") as HTMLElement;
+                                  cellDiv?.focus();
+                                }, 0);
+                              }
+                            }}
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* Add column button (to the right of the table, hidden in readOnly) */}
+            {!readOnly &&
+            <div style={{ display: "flex", alignItems: "center" }}>
+              <button
+                type="button"
+                onClick={addColumn}
+                title="Add column"
+                style={{
+                  background: "none",
+                  border: "1px dashed var(--border-primary, #e5e5e5)",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  padding: "4px 6px",
+                  marginLeft: 4,
+                  color: "var(--text-muted, #999)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  opacity: 0.5,
+                  transition: "opacity 150ms",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = "0.5"; }}
+              >
+                <Plus size={14} />
+              </button>
+            </div>}
+          </div>
+
+          {/* Add row button (below the table, hidden in readOnly) */}
+          {!readOnly && <div style={{ display: "flex", justifyContent: "center", paddingLeft: readOnly ? 0 : 28, marginTop: 4 }}>
+            <button
+              type="button"
+              onClick={addRow}
+              title="Add row"
+              style={{
+                background: "none",
+                border: "1px dashed var(--border-primary, #e5e5e5)",
+                borderRadius: 4,
+                cursor: "pointer",
+                padding: "4px 20px",
+                color: "var(--text-muted, #999)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 4,
+                fontSize: 13,
+                opacity: 0.5,
+                transition: "opacity 150ms",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = "0.5"; }}
+            >
+              <Plus size={14} />
+            </button>
+          </div>}
+        </div>
+      </div>
     </div>
   );
 }

@@ -31,7 +31,11 @@ export type MarkType =
   | "underline"
   | "strikethrough"
   | "code"
-  | "link";
+  | "link"
+  | "superscript"
+  | "subscript"
+  | "color"
+  | "highlight";
 
 /** A mark applied to inline text */
 export interface Mark {
