@@ -16,8 +16,17 @@ import {
   Lightbulb,
   ChevronRight,
   Palette,
+  SquareDashedBottom,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { BlockType } from "../core/types";
+import { COLOR_TEMPLATES, type ColorTemplate } from "../blocks/TableBlock";
+
+export interface TableMenuState {
+  showBorders: boolean;
+  compact: boolean;
+}
 
 export interface BlockMenuProps {
   position: { x: number; y: number };
@@ -29,6 +38,11 @@ export interface BlockMenuProps {
   onTurnInto: (blockId: string, newType: BlockType) => void;
   onMoveUp: (blockId: string) => void;
   onMoveDown: (blockId: string) => void;
+  /** Table-specific state — only present when blockType === "table" */
+  tableState?: TableMenuState;
+  onToggleBorders?: (blockId: string) => void;
+  onToggleCompact?: (blockId: string) => void;
+  onApplyColorTemplate?: (blockId: string, template: ColorTemplate) => void;
 }
 
 interface TurnIntoOption {
@@ -128,6 +142,30 @@ const styles = {
   },
 };
 
+// ---- Color Template Preview Swatch ----
+
+function TemplatePreview({ template }: { template: ColorTemplate }) {
+  const { header, evenRow, oddRow } = template.preview;
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        width: 28,
+        height: 20,
+        borderRadius: 3,
+        overflow: "hidden",
+        border: "1px solid var(--border-primary, #e5e5e5)",
+        flexShrink: 0,
+      }}
+    >
+      <div style={{ flex: 1, backgroundColor: header || "var(--bg-primary, #fff)" }} />
+      <div style={{ flex: 1, backgroundColor: oddRow || "var(--bg-primary, #fff)" }} />
+      <div style={{ flex: 1, backgroundColor: evenRow || "var(--bg-primary, #fff)" }} />
+    </div>
+  );
+}
+
 export function BlockMenu({
   position,
   blockId,
@@ -138,11 +176,18 @@ export function BlockMenu({
   onTurnInto,
   onMoveUp,
   onMoveDown,
+  tableState,
+  onToggleBorders,
+  onToggleCompact,
+  onApplyColorTemplate,
 }: BlockMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [showTurnInto, setShowTurnInto] = useState(false);
+  const [showColorTemplates, setShowColorTemplates] = useState(false);
   const [hoveredSubItem, setHoveredSubItem] = useState<string | null>(null);
+
+  const isTable = blockType === "table";
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -161,6 +206,11 @@ export function BlockMenu({
   const handleOverlayMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     onClose();
+  };
+
+  const closeSubmenus = () => {
+    setShowTurnInto(false);
+    setShowColorTemplates(false);
   };
 
   const itemStyle = (id: string, extra?: React.CSSProperties): React.CSSProperties => ({
@@ -187,7 +237,7 @@ export function BlockMenu({
           style={itemStyle("move-up")}
           onMouseEnter={() => {
             setHoveredItem("move-up");
-            setShowTurnInto(false);
+            closeSubmenus();
           }}
           onMouseLeave={() => setHoveredItem(null)}
           onMouseDown={(e) => {
@@ -204,7 +254,7 @@ export function BlockMenu({
           style={itemStyle("move-down")}
           onMouseEnter={() => {
             setHoveredItem("move-down");
-            setShowTurnInto(false);
+            closeSubmenus();
           }}
           onMouseLeave={() => setHoveredItem(null)}
           onMouseDown={(e) => {
@@ -219,67 +269,170 @@ export function BlockMenu({
 
         <div style={styles.divider} />
 
-        {/* Section 2: Turn into (submenu) */}
-        <div
-          style={{
-            ...itemStyle("turn-into"),
-            position: "relative" as const,
-            // Extra right padding to create a hover bridge to the submenu
-            paddingRight: showTurnInto ? 20 : 12,
-          }}
-          onMouseEnter={() => {
-            setHoveredItem("turn-into");
-            setShowTurnInto(true);
-          }}
-          onMouseLeave={() => {
-            setHoveredItem(null);
-            setShowTurnInto(false);
-          }}
-        >
-          <div style={styles.submenuTrigger}>
-            <div style={styles.submenuTriggerLeft}>
-              <Palette size={15} />
-              <span>Turn into</span>
+        {/* Table-specific section */}
+        {isTable && tableState && (
+          <>
+            {/* Toggle Borders */}
+            <div
+              style={itemStyle("toggle-borders")}
+              onMouseEnter={() => {
+                setHoveredItem("toggle-borders");
+                closeSubmenus();
+              }}
+              onMouseLeave={() => setHoveredItem(null)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onToggleBorders?.(blockId);
+                onClose();
+              }}
+            >
+              <SquareDashedBottom size={15} />
+              <span>{tableState.showBorders ? "Hide Borders" : "Show Borders"}</span>
+              {!tableState.showBorders && <div style={styles.activeIndicator} />}
             </div>
-            <ChevronRight size={14} />
-          </div>
 
-          {showTurnInto && (
-            <div style={styles.submenu}>
-              {TURN_INTO_OPTIONS.map((option) => (
-                <div
-                  key={option.type}
-                  style={{
-                    ...styles.item,
-                    ...(hoveredSubItem === option.type ? styles.itemHover : {}),
-                    ...(blockType === option.type ? { backgroundColor: "var(--block-menu-active-bg, #e8f0fe)" } : {}),
-                  }}
-                  onMouseEnter={() => setHoveredSubItem(option.type)}
-                  onMouseLeave={() => setHoveredSubItem(null)}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onTurnInto(blockId, option.type);
-                    onClose();
-                  }}
-                >
-                  {option.icon}
-                  <span>{option.label}</span>
-                  {blockType === option.type && <div style={styles.activeIndicator} />}
+            {/* Toggle Full Width / Compact */}
+            <div
+              style={itemStyle("toggle-compact")}
+              onMouseEnter={() => {
+                setHoveredItem("toggle-compact");
+                closeSubmenus();
+              }}
+              onMouseLeave={() => setHoveredItem(null)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onToggleCompact?.(blockId);
+                onClose();
+              }}
+            >
+              {tableState.compact ? <Maximize2 size={15} /> : <Minimize2 size={15} />}
+              <span>{tableState.compact ? "Full Width" : "Compact"}</span>
+            </div>
+
+            {/* Color Template submenu */}
+            <div
+              style={{
+                ...itemStyle("color-template"),
+                position: "relative" as const,
+                paddingRight: showColorTemplates ? 20 : 12,
+              }}
+              onMouseEnter={() => {
+                setHoveredItem("color-template");
+                setShowTurnInto(false);
+                setShowColorTemplates(true);
+              }}
+              onMouseLeave={() => {
+                setHoveredItem(null);
+                setShowColorTemplates(false);
+              }}
+            >
+              <div style={styles.submenuTrigger}>
+                <div style={styles.submenuTriggerLeft}>
+                  <Palette size={15} />
+                  <span>Color Theme</span>
                 </div>
-              ))}
+                <ChevronRight size={14} />
+              </div>
+
+              {showColorTemplates && (
+                <div style={{ ...styles.submenu, width: 210 }}>
+                  {COLOR_TEMPLATES.map((tmpl) => (
+                    <div
+                      key={tmpl.name}
+                      style={{
+                        ...styles.item,
+                        ...(hoveredSubItem === tmpl.name ? styles.itemHover : {}),
+                        gap: 8,
+                      }}
+                      onMouseEnter={() => setHoveredSubItem(tmpl.name)}
+                      onMouseLeave={() => setHoveredSubItem(null)}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onApplyColorTemplate?.(blockId, tmpl);
+                        onClose();
+                      }}
+                    >
+                      <TemplatePreview template={tmpl} />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>{tmpl.name}</span>
+                        <span style={{ fontSize: 11, color: "var(--text-muted, #888)" }}>{tmpl.description}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        <div style={styles.divider} />
+            <div style={styles.divider} />
+          </>
+        )}
 
-        {/* Section 3: Actions */}
+        {/* Turn into (submenu) — hide for tables since they can't turn into other types */}
+        {!isTable && (
+          <>
+            <div
+              style={{
+                ...itemStyle("turn-into"),
+                position: "relative" as const,
+                paddingRight: showTurnInto ? 20 : 12,
+              }}
+              onMouseEnter={() => {
+                setHoveredItem("turn-into");
+                setShowTurnInto(true);
+                setShowColorTemplates(false);
+              }}
+              onMouseLeave={() => {
+                setHoveredItem(null);
+                setShowTurnInto(false);
+              }}
+            >
+              <div style={styles.submenuTrigger}>
+                <div style={styles.submenuTriggerLeft}>
+                  <Palette size={15} />
+                  <span>Turn into</span>
+                </div>
+                <ChevronRight size={14} />
+              </div>
+
+              {showTurnInto && (
+                <div style={styles.submenu}>
+                  {TURN_INTO_OPTIONS.map((option) => (
+                    <div
+                      key={option.type}
+                      style={{
+                        ...styles.item,
+                        ...(hoveredSubItem === option.type ? styles.itemHover : {}),
+                        ...(blockType === option.type ? { backgroundColor: "var(--block-menu-active-bg, #e8f0fe)" } : {}),
+                      }}
+                      onMouseEnter={() => setHoveredSubItem(option.type)}
+                      onMouseLeave={() => setHoveredSubItem(null)}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onTurnInto(blockId, option.type);
+                        onClose();
+                      }}
+                    >
+                      {option.icon}
+                      <span>{option.label}</span>
+                      {blockType === option.type && <div style={styles.activeIndicator} />}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={styles.divider} />
+          </>
+        )}
+
+        {/* Actions */}
         <div
           style={itemStyle("duplicate")}
           onMouseEnter={() => {
             setHoveredItem("duplicate");
-            setShowTurnInto(false);
+            closeSubmenus();
           }}
           onMouseLeave={() => setHoveredItem(null)}
           onMouseDown={(e) => {
@@ -296,7 +449,7 @@ export function BlockMenu({
           style={itemStyle("delete", styles.itemDelete)}
           onMouseEnter={() => {
             setHoveredItem("delete");
-            setShowTurnInto(false);
+            closeSubmenus();
           }}
           onMouseLeave={() => setHoveredItem(null)}
           onMouseDown={(e) => {

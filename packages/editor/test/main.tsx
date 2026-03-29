@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { CortexEditor, type CortexEditorRef, type EditorDocument } from "../src";
+import { CortexEditor, type CortexEditorRef, type EditorDocument, markdownToBlocks } from "../src";
 import "./styles.css";
 
 function App() {
@@ -70,3 +70,13 @@ const root = createRoot(document.getElementById("app")!);
 root.render(<App />);
 
 (window as any).__getDoc = () => (window as any).__editorDoc;
+
+(window as any).__loadMarkdown = (md: string) => {
+  const blocks = markdownToBlocks(md);
+  const ref = (window as any).__editorRef;
+  if (ref) {
+    ref.setDocument({ blocks, version: Date.now() });
+    (window as any).__editorDoc = { blocks, version: Date.now() };
+  }
+  return blocks;
+};

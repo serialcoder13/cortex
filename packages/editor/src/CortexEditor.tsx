@@ -1037,16 +1037,20 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
 
       root.addEventListener("input", update);
       return () => root.removeEventListener("input", update);
-    }, [readOnly, doc.blocks.length]);
+    }, [readOnly, doc]);
 
     // ---- Listen for table cell updates ----
     useEffect(() => {
       const handleTableUpdate = (e: Event) => {
-        const { blockId, tableData } = (e as CustomEvent).detail;
-        const newDoc = updateBlock(docRef.current, blockId, (b) => ({
-          ...b,
-          props: { ...b.props, tableData },
-        }));
+        const detail = (e as CustomEvent).detail;
+        const newDoc = updateBlock(docRef.current, detail.blockId, (b) => {
+          const props = { ...b.props, tableData: detail.tableData };
+          // Persist all table metadata fields
+          for (const key of ["cellMeta", "columnAlignments", "columnWidths", "merges", "showBorders", "compact", "colorTemplate"]) {
+            if (detail[key] !== undefined) (props as any)[key] = detail[key];
+          }
+          return { ...b, props };
+        });
         setDoc(newDoc);
         docRef.current = newDoc;
         onChange?.(newDoc);
@@ -1241,6 +1245,50 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
               }
               setBlockMenu({ open: false, blockId: "", position: { x: 0, y: 0 } });
             }}
+            // ---- Table-specific props ----
+            tableState={(() => {
+              const blk = findBlock(docRef.current, blockMenu.blockId);
+              if (blk?.type !== "table") return undefined;
+              return {
+                showBorders: (blk.props.showBorders as boolean) ?? true,
+                compact: (blk.props.compact as boolean) ?? false,
+              };
+            })()}
+            onToggleBorders={(id) => {
+              const blk = findBlock(docRef.current, id);
+              if (!blk) return;
+              const next = !((blk.props.showBorders as boolean) ?? true);
+              globalThis.dispatchEvent(
+                new CustomEvent("cortex-table-update", {
+                  detail: { blockId: id, tableData: blk.props.tableData, showBorders: next },
+                }),
+              );
+            }}
+            onToggleCompact={(id) => {
+              const blk = findBlock(docRef.current, id);
+              if (!blk) return;
+              const next = !((blk.props.compact as boolean) ?? false);
+              globalThis.dispatchEvent(
+                new CustomEvent("cortex-table-update", {
+                  detail: { blockId: id, tableData: blk.props.tableData, compact: next },
+                }),
+              );
+            }}
+            onApplyColorTemplate={(id, template) => {
+              const blk = findBlock(docRef.current, id);
+              if (!blk) return;
+              const tableData = blk.props.tableData as string[][] | undefined;
+              const rows = tableData?.length ?? 0;
+              const cols = tableData?.[0]?.length ?? 0;
+              const cellMeta = template.apply(rows, cols);
+              // Store template name so row/col changes can reapply the pattern
+              const colorTemplate = template.name === "Default" ? "" : template.name;
+              globalThis.dispatchEvent(
+                new CustomEvent("cortex-table-update", {
+                  detail: { blockId: id, tableData: tableData, cellMeta, colorTemplate },
+                }),
+              );
+            }}
           />
         )}
 
@@ -1269,17 +1317,11 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           <FindReplaceBar
             doc={doc}
             showReplace={findReplace.showReplace}
-            onHighlight={() => {/* TODO: highlight matches in DOM */}}
-            onNavigate={(match) => {
-              // Set selection to the match
-              setSelection({
-                anchor: { blockId: match.blockId, offset: match.offset },
-                focus: { blockId: match.blockId, offset: match.offset + match.length },
-              });
-              selectionRef.current = {
-                anchor: { blockId: match.blockId, offset: match.offset },
-                focus: { blockId: match.blockId, offset: match.offset + match.length },
-              };
+            onHighlight={() => {/* Highlighting is now CSS-based inside FindReplaceBar */}}
+            onNavigate={() => {
+              // Navigation/scrolling is handled by CSS highlights inside FindReplaceBar.
+              // We intentionally do NOT set the editor selection here so the
+              // find input keeps focus and the user can keep typing.
             }}
             onReplace={(match, replacement) => {
               const del = deleteTextOp(docRef.current, match.blockId, match.offset, match.length);

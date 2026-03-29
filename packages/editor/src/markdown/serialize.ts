@@ -97,13 +97,26 @@ function serializeBlock(block: Block, index: number, siblings: Block[]): string 
     case "table": {
       const tableData: string[][] | undefined = block.props.tableData;
       if (tableData && tableData.length > 0) {
+        const aligns: string[] = (block.props.columnAlignments as string[]) ?? [];
         const headerRow = tableData[0];
         const headerLine = "| " + headerRow.join(" | ") + " |";
-        const separatorLine = "| " + headerRow.map(() => "---").join(" | ") + " |";
+        const separatorLine = "| " + headerRow.map((_h, i) => {
+          const a = aligns[i];
+          if (a === "center") return ":---:";
+          if (a === "right") return "---:";
+          return "---";
+        }).join(" | ") + " |";
         const bodyLines = tableData.slice(1).map(
           (row) => "| " + row.join(" | ") + " |",
         );
-        return [headerLine, separatorLine, ...bodyLines].join("\n") + "\n\n";
+        const tableLines = [headerLine, separatorLine, ...bodyLines].join("\n");
+
+        // Serialize table metadata (colors, borders, compact, template) as HTML comment
+        const meta = serializeTableMeta(block);
+        if (meta) {
+          return `<!-- cortex-table:${meta} -->\n${tableLines}\n\n`;
+        }
+        return tableLines + "\n\n";
       }
       return text + "\n\n";
     }
@@ -260,4 +273,33 @@ function serializeSpan(span: TextSpan): string {
  */
 function getPlainText(content: TextSpan[]): string {
   return content.map((span) => span.text).join("");
+}
+
+/**
+ * Serialize table metadata (cellMeta, showBorders, compact, colorTemplate)
+ * as a JSON string for embedding in an HTML comment.
+ * Returns null if there's no metadata worth persisting.
+ */
+function serializeTableMeta(block: Block): string | null {
+  const meta: Record<string, unknown> = {};
+
+  const cellMeta = block.props.cellMeta;
+  if (cellMeta && typeof cellMeta === "object" && Object.keys(cellMeta).length > 0) {
+    meta.cellMeta = cellMeta;
+  }
+
+  if (block.props.showBorders === false) {
+    meta.showBorders = false;
+  }
+
+  if (block.props.compact === true) {
+    meta.compact = true;
+  }
+
+  if (block.props.colorTemplate && block.props.colorTemplate !== "") {
+    meta.colorTemplate = block.props.colorTemplate;
+  }
+
+  if (Object.keys(meta).length === 0) return null;
+  return JSON.stringify(meta);
 }

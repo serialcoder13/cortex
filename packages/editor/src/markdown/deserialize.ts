@@ -33,6 +33,21 @@ export function markdownToBlocks(markdown: string): Block[] {
       continue;
     }
 
+    // --- Table with optional metadata comment ---
+    // Detect <!-- cortex-table:{json} --> followed by a table
+    const tableMeta = parseTableMetaComment(line);
+    if (tableMeta !== null) {
+      // Next non-empty line should be the table
+      let nextLine = i + 1;
+      while (nextLine < lines.length && lines[nextLine].trim() === "") nextLine++;
+      if (nextLine < lines.length && lines[nextLine].trimStart().startsWith("|")) {
+        const result = parseTable(lines, nextLine, tableMeta);
+        blocks.push(result.block);
+        i = result.nextIndex;
+        continue;
+      }
+    }
+
     // --- Table: lines starting with | ---
     if (line.trimStart().startsWith("|")) {
       const result = parseTable(lines, i);
@@ -236,9 +251,24 @@ function parseMermaidBlock(
 
 // ---- Table parsing ----
 
+/**
+ * Parse a `<!-- cortex-table:{json} -->` comment. Returns the parsed metadata
+ * object, or null if the line is not a table meta comment.
+ */
+function parseTableMetaComment(line: string): Record<string, unknown> | null {
+  const match = line.trim().match(/^<!--\s*cortex-table:(.*?)\s*-->$/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
 function parseTable(
   lines: string[],
   startIndex: number,
+  meta?: Record<string, unknown>,
 ): { block: Block; nextIndex: number } {
   const tableLines: string[] = [];
   let i = startIndex;
@@ -247,12 +277,26 @@ function parseTable(
     i++;
   }
 
-  // Parse rows, skipping the separator line (| --- | --- |)
+  // Parse rows, extracting alignment from the separator line
   const tableData: string[][] = [];
+  let columnAlignments: string[] | undefined;
   for (const tl of tableLines) {
     const trimmed = tl.trim();
-    // Skip separator lines like | --- | --- |
+    // Check for separator lines like | --- | :---: | ---: |
     if (/^\|[\s\-:|]+\|$/.test(trimmed)) {
+      // Extract alignment info
+      const separatorCells = trimmed
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .split("|")
+        .map((c) => c.trim());
+      columnAlignments = separatorCells.map((cell) => {
+        const left = cell.startsWith(":");
+        const right = cell.endsWith(":");
+        if (left && right) return "center";
+        if (right) return "right";
+        return "left";
+      });
       continue;
     }
     // Split cells: remove leading/trailing |, split by |, trim each cell
@@ -264,8 +308,20 @@ function parseTable(
     tableData.push(cells);
   }
 
+  const props: Record<string, unknown> = { tableData };
+  if (columnAlignments && columnAlignments.some((a) => a !== "left")) {
+    props.columnAlignments = columnAlignments;
+  }
+
+  // Merge table metadata from cortex-table comment
+  if (meta) {
+    for (const key of ["cellMeta", "showBorders", "compact", "colorTemplate"]) {
+      if (meta[key] !== undefined) props[key] = meta[key];
+    }
+  }
+
   return {
-    block: makeBlock("table", [], { tableData }),
+    block: makeBlock("table", [], props),
     nextIndex: i,
   };
 }

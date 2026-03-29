@@ -66,20 +66,34 @@ async function getTableDimensions(page: Page): Promise<[number, number]> {
   return [data.length, data[0]?.length ?? 0];
 }
 
-/** Click the column menu button (⋯) for a given column index */
+/** Click the column menu button for a given column index */
 async function openColumnMenu(page: Page, colIdx: number) {
-  // Column buttons are above the table
-  const colButtons = page.locator("button").filter({ has: page.locator("svg") });
+  // First click a cell in the column to make the handle visible
+  const tds = table(page).locator("tr").first().locator("td");
+  await tds.nth(colIdx).click();
+  await page.waitForTimeout(200);
+
+  // Use aria-label to find column option buttons
+  const colButtons = page.locator("[data-table-block] button[aria-label='Column options']");
+  const count = await colButtons.count();
+  if (count > colIdx) {
+    await colButtons.nth(colIdx).hover();
+    await page.waitForTimeout(100);
+    await colButtons.nth(colIdx).click();
+    await page.waitForTimeout(200);
+    return;
+  }
+
+  // Fallback: find buttons above the table by position
+  const allButtons = page.locator("button").filter({ has: page.locator("svg") });
   const tableEl = table(page);
   const tableBox = await tableEl.boundingBox();
   if (!tableBox) return;
-
-  // Find buttons that are above the table
-  const all = await colButtons.all();
+  const all = await allButtons.all();
   const aboveButtons: any[] = [];
   for (const btn of all) {
     const box = await btn.boundingBox();
-    if (box && box.y < tableBox.y) {
+    if (box && box.y < tableBox.y && box.y > tableBox.y - 60) {
       aboveButtons.push(btn);
     }
   }
@@ -131,7 +145,7 @@ test.describe("Table — Header Styling", () => {
 
     // First row cells should have fontWeight 600
     const firstRowTd = table(page).locator("tr").first().locator("td").first();
-    const fw = await firstRowTd.locator("div").evaluate(el => getComputedStyle(el).fontWeight);
+    const fw = await firstRowTd.locator("[contenteditable]").evaluate(el => getComputedStyle(el).fontWeight);
     expect(parseInt(fw)).toBeGreaterThanOrEqual(600);
   });
 
@@ -239,8 +253,8 @@ test.describe("Table — Column Menu", () => {
     await createTable(page);
     await openColumnMenu(page, 0);
 
-    // Should show menu items like "Insert column left"
-    const menuText = await page.locator("text=/Insert column|Delete column/i").first();
+    // Should show menu items like "Insert column left" or "Move left"
+    const menuText = await page.locator("text=/Insert column|Delete column|Move left/i").first();
     await expect(menuText).toBeVisible({ timeout: 2000 });
   });
 
