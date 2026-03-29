@@ -28,6 +28,12 @@ export function BlockRenderer({ block, readOnly = false, onToggleTodo, onToggleC
       return <HeadingBlock block={block} level={2} />;
     case "heading3":
       return <HeadingBlock block={block} level={3} />;
+    case "heading4":
+      return <HeadingBlock block={block} level={4} />;
+    case "heading5":
+      return <HeadingBlock block={block} level={5} />;
+    case "heading6":
+      return <HeadingBlock block={block} level={6} />;
     case "bulletList":
       return <BulletListBlock block={block} />;
     case "numberedList":
@@ -67,11 +73,14 @@ function ParagraphBlock({ block }: { block: Block }) {
   );
 }
 
-function HeadingBlock({ block, level }: { block: Block; level: 1 | 2 | 3 }) {
-  const styles: Record<1 | 2 | 3, React.CSSProperties> = {
+function HeadingBlock({ block, level }: { block: Block; level: 1 | 2 | 3 | 4 | 5 | 6 }) {
+  const styles: Record<1 | 2 | 3 | 4 | 5 | 6, React.CSSProperties> = {
     1: { fontSize: "1.875rem", fontWeight: 700, lineHeight: 1.25, marginTop: 40, marginBottom: 4 },
     2: { fontSize: "1.5rem", fontWeight: 600, lineHeight: 1.25, marginTop: 32, marginBottom: 4 },
     3: { fontSize: "1.25rem", fontWeight: 600, lineHeight: 1.375, marginTop: 24, marginBottom: 4 },
+    4: { fontSize: "1.125rem", fontWeight: 600, lineHeight: 1.375, marginTop: 20, marginBottom: 2 },
+    5: { fontSize: "1rem", fontWeight: 600, lineHeight: 1.5, marginTop: 16, marginBottom: 2 },
+    6: { fontSize: "0.875rem", fontWeight: 600, lineHeight: 1.5, marginTop: 12, marginBottom: 2, textTransform: "uppercase", letterSpacing: "0.05em" },
   };
 
   return (
@@ -81,14 +90,50 @@ function HeadingBlock({ block, level }: { block: Block; level: 1 | 2 | 3 }) {
   );
 }
 
+// ---- List style helpers ----
+
+export type BulletStyle = "disc" | "circle" | "square" | "dash" | "arrow";
+export type NumberStyle = "decimal" | "alpha-lower" | "alpha-upper" | "roman-lower" | "roman-upper";
+
+const BULLET_CHARS: Record<BulletStyle, string> = {
+  disc: "•",
+  circle: "◦",
+  square: "▪",
+  dash: "–",
+  arrow: "→",
+};
+
+function formatNumber(n: number, style: NumberStyle): string {
+  switch (style) {
+    case "alpha-lower": return String.fromCharCode(96 + ((n - 1) % 26) + 1);
+    case "alpha-upper": return String.fromCharCode(64 + ((n - 1) % 26) + 1);
+    case "roman-lower": return toRoman(n).toLowerCase();
+    case "roman-upper": return toRoman(n);
+    default: return String(n);
+  }
+}
+
+function toRoman(num: number): string {
+  const vals = [1000,900,500,400,100,90,50,40,10,9,5,4,1];
+  const syms = ["M","CM","D","CD","C","XC","L","XL","X","IX","V","IV","I"];
+  let result = "";
+  let n = Math.max(1, Math.min(num, 3999));
+  for (let i = 0; i < vals.length; i++) {
+    while (n >= vals[i]) { result += syms[i]; n -= vals[i]; }
+  }
+  return result;
+}
+
 function BulletListBlock({ block }: { block: Block }) {
+  const style = (block.props.listStyle as BulletStyle) || "disc";
+  const bullet = BULLET_CHARS[style] ?? "•";
   return (
     <div style={{ display: "flex", gap: 6, paddingLeft: 4, alignItems: "baseline" }}>
       <span
         style={{ userSelect: "none", color: "var(--text-muted, #999)", lineHeight: 1.625, fontSize: "0.8em" }}
         contentEditable={false}
       >
-        •
+        {bullet}
       </span>
       <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
         <TextContent content={block.content} />
@@ -99,6 +144,9 @@ function BulletListBlock({ block }: { block: Block }) {
 
 function NumberedListBlock({ block }: { block: Block }) {
   const number = block.props.number ?? 1;
+  const style = (block.props.numberStyle as NumberStyle) || "decimal";
+  const formatted = formatNumber(number, style);
+  const suffix = style === "decimal" ? "." : ")";
   return (
     <div style={{ display: "flex", gap: 6, paddingLeft: 4, alignItems: "baseline" }}>
       <span
@@ -110,7 +158,7 @@ function NumberedListBlock({ block }: { block: Block }) {
         }}
         contentEditable={false}
       >
-        {String(number)}.
+        {formatted}{suffix}
       </span>
       <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
         <TextContent content={block.content} />

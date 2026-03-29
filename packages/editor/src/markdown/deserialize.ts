@@ -6,12 +6,27 @@
 import type { Block, TextSpan, Mark, BlockType, BlockProps } from "../core/types";
 import { generateId } from "../core/types";
 import { detectCustomComponentMarker, isCustomComponentEndMarker, deserializeCustomComponent } from "../blocks/component-registry";
+import { emojiMap } from "./emoji";
+
+/** Extract reference link definitions: [ref]: url "title" (excludes footnote ^refs) */
+function extractRefLinks(lines: string[]): Map<string, string> {
+  const refs = new Map<string, string>();
+  for (const line of lines) {
+    const m = line.match(/^\[([^\]]+)\]:\s+(.+?)(?:\s+"[^"]*")?\s*$/);
+    if (m && !m[1].startsWith("^")) refs.set(m[1].toLowerCase(), m[2]);
+  }
+  return refs;
+}
+
+/** Module-level ref links map, set during parsing */
+let _refLinks: Map<string, string> = new Map();
 
 /**
  * Convert a markdown string (without frontmatter) into an array of Blocks.
  */
 export function markdownToBlocks(markdown: string): Block[] {
   const lines = markdown.split("\n");
+  _refLinks = extractRefLinks(lines);
   const blocks: Block[] = [];
   let i = 0;
 
@@ -31,6 +46,24 @@ export function markdownToBlocks(markdown: string): Block[] {
       blocks.push(result.block);
       i = result.nextIndex;
       continue;
+    }
+
+    // --- Code block (indented: 4+ spaces or tab) ---
+    if (/^(    |\t)/.test(line)) {
+      const codeLines: string[] = [];
+      let j = i;
+      while (j < lines.length && (/^(    |\t)/.test(lines[j]) || lines[j].trim() === "")) {
+        // Remove 4-space or tab prefix
+        codeLines.push(lines[j].replace(/^(    |\t)/, ""));
+        j++;
+      }
+      // Trim trailing empty lines
+      while (codeLines.length > 0 && codeLines[codeLines.length - 1].trim() === "") codeLines.pop();
+      if (codeLines.length > 0) {
+        blocks.push(makeBlock("codeBlock", [{ text: codeLines.join("\n") }], {}));
+        i = j;
+        continue;
+      }
     }
 
     // --- Table with optional metadata comment ---
@@ -71,9 +104,23 @@ export function markdownToBlocks(markdown: string): Block[] {
       continue;
     }
 
+    // --- Setext headings: text followed by === or --- on next line ---
+    if (i + 1 < lines.length && line.trim().length > 0) {
+      const nextLine = lines[i + 1].trim();
+      if (/^={3,}$/.test(nextLine)) {
+        blocks.push(makeBlock("heading1", parseInlineMarks(line.trim())));
+        i += 2; // skip both lines
+        continue;
+      }
+      if (/^-{3,}$/.test(nextLine) && !line.trim().startsWith(">") && !line.trim().startsWith("-") && !line.trim().startsWith("*") && !line.trim().startsWith("#")) {
+        blocks.push(makeBlock("heading2", parseInlineMarks(line.trim())));
+        i += 2;
+        continue;
+      }
+    }
+
     // --- Divider ---
-    if (/^(-{3,}|\*{3,})$/.test(line.trim()) && line.trim().length >= 3) {
-      // Make sure it's not just a `---` that could be frontmatter (handled elsewhere)
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim()) && line.trim().length >= 3) {
       blocks.push(makeBlock("divider", [], {}));
       i++;
       continue;
@@ -92,12 +139,15 @@ export function markdownToBlocks(markdown: string): Block[] {
       continue;
     }
 
-    // --- Headings ---
-    const headingMatch = line.match(/^(#{1,3})\s+(.*)/);
+    // --- Headings (h1-h6) ---
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
     if (headingMatch) {
-      const level = headingMatch[1].length as 1 | 2 | 3;
-      const headingType: BlockType =
-        level === 1 ? "heading1" : level === 2 ? "heading2" : "heading3";
+      const level = headingMatch[1].length;
+      const headingTypes: Record<number, BlockType> = {
+        1: "heading1", 2: "heading2", 3: "heading3",
+        4: "heading4", 5: "heading5", 6: "heading6",
+      };
+      const headingType = headingTypes[level] ?? "heading6";
       blocks.push(makeBlock(headingType, parseInlineMarks(headingMatch[2])));
       i++;
       continue;
@@ -114,21 +164,38 @@ export function markdownToBlocks(markdown: string): Block[] {
       continue;
     }
 
-    // --- Bullet list: - or * ---
-    const bulletMatch = line.match(/^[-*]\s+(.*)/);
+    // --- Bullet list: - or * (with nested child support) ---
+    const bulletMatch = line.match(/^[-*+]\s+(.*)/);
     if (bulletMatch) {
-      blocks.push(makeBlock("bulletList", parseInlineMarks(bulletMatch[1])));
+      const block = makeBlock("bulletList", parseInlineMarks(bulletMatch[1]));
       i++;
+      // Collect indented child lines (2+ spaces or tab)
+      const childLines: string[] = [];
+      while (i < lines.length && /^(\s{2,}|\t)/.test(lines[i]) && lines[i].trim() !== "") {
+        childLines.push(lines[i].replace(/^(\s{2,}|\t)/, ""));
+        i++;
+      }
+      if (childLines.length > 0) {
+        block.children = markdownToBlocks(childLines.join("\n"));
+      }
+      blocks.push(block);
       continue;
     }
 
-    // --- Numbered list: 1. or any digit. ---
+    // --- Numbered list: 1. or any digit. (with nested child support) ---
     const numberedMatch = line.match(/^\d+\.\s+(.*)/);
     if (numberedMatch) {
-      blocks.push(
-        makeBlock("numberedList", parseInlineMarks(numberedMatch[1])),
-      );
+      const block = makeBlock("numberedList", parseInlineMarks(numberedMatch[1]));
       i++;
+      const childLines: string[] = [];
+      while (i < lines.length && /^(\s{2,}|\t)/.test(lines[i]) && lines[i].trim() !== "") {
+        childLines.push(lines[i].replace(/^(\s{2,}|\t)/, ""));
+        i++;
+      }
+      if (childLines.length > 0) {
+        block.children = markdownToBlocks(childLines.join("\n"));
+      }
+      blocks.push(block);
       continue;
     }
 
@@ -151,22 +218,41 @@ export function markdownToBlocks(markdown: string): Block[] {
       continue;
     }
 
-    // --- Quote: > ---
+    // --- Quote: > (with nested blockquote support) ---
     const quoteMatch = line.match(/^>\s?(.*)/);
     if (quoteMatch) {
-      const quoteLines: string[] = [quoteMatch[1]];
+      // Collect all consecutive > lines, stripping one level of >
+      const innerLines: string[] = [quoteMatch[1]];
       let j = i + 1;
       while (j < lines.length) {
         const nextQuoteMatch = lines[j].match(/^>\s?(.*)/);
         if (nextQuoteMatch) {
-          quoteLines.push(nextQuoteMatch[1]);
+          innerLines.push(nextQuoteMatch[1]);
           j++;
         } else {
           break;
         }
       }
-      const quoteText = quoteLines.join("\n");
-      blocks.push(makeBlock("quote", parseInlineMarks(quoteText)));
+      // Check if the inner content itself contains blockquotes (nested)
+      const hasNestedQuotes = innerLines.some((l) => l.startsWith(">"));
+      if (hasNestedQuotes) {
+        // Recursively parse inner content to get children blocks
+        const innerMarkdown = innerLines.join("\n");
+        const children = markdownToBlocks(innerMarkdown);
+        // The first child's content becomes the quote's own content,
+        // remaining children become the quote's children array
+        const first = children[0];
+        const quoteBlock = makeBlock(
+          "quote",
+          first?.content ?? [],
+          {},
+        );
+        quoteBlock.children = children.slice(1);
+        blocks.push(quoteBlock);
+      } else {
+        const quoteText = innerLines.join("\n");
+        blocks.push(makeBlock("quote", parseInlineMarks(quoteText)));
+      }
       i = j;
       continue;
     }
@@ -189,6 +275,12 @@ export function markdownToBlocks(markdown: string): Block[] {
 
     // --- Empty line: skip ---
     if (line.trim() === "") {
+      i++;
+      continue;
+    }
+
+    // --- Reference link definition: [ref]: url — skip (already extracted in pre-pass) ---
+    if (/^\[([^\]]+)\]:\s+/.test(line.trim())) {
       i++;
       continue;
     }
@@ -478,6 +570,28 @@ function tokenizeInline(text: string): InlineToken[] {
       }
     }
 
+    // --- Bold+Italic: ___...___ ---
+    if (text.slice(i, i + 3) === "___") {
+      const end = text.indexOf("___", i + 3);
+      if (end !== -1) {
+        flushBuffer();
+        tokens.push({ type: "bolditalic", text: text.slice(i + 3, end) });
+        i = end + 3;
+        continue;
+      }
+    }
+
+    // --- Bold: __...__ ---
+    if (text.slice(i, i + 2) === "__") {
+      const end = text.indexOf("__", i + 2);
+      if (end !== -1) {
+        flushBuffer();
+        tokens.push({ type: "bold", text: text.slice(i + 2, end) });
+        i = end + 2;
+        continue;
+      }
+    }
+
     // --- Strikethrough: ~~...~~ ---
     if (text.slice(i, i + 2) === "~~") {
       const end = text.indexOf("~~", i + 2);
@@ -492,6 +606,24 @@ function tokenizeInline(text: string): InlineToken[] {
     // --- Italic: *...* (single, not followed by another *) ---
     if (text[i] === "*" && text[i + 1] !== "*") {
       const end = findSingleAsteriskClose(text, i + 1);
+      if (end !== -1) {
+        flushBuffer();
+        tokens.push({ type: "italic", text: text.slice(i + 1, end) });
+        i = end + 1;
+        continue;
+      }
+    }
+
+    // --- Italic: _..._ (single underscore, not followed by another _) ---
+    if (text[i] === "_" && text[i + 1] !== "_") {
+      // Find closing single underscore
+      let end = -1;
+      for (let j = i + 1; j < text.length; j++) {
+        if (text[j] === "_" && text[j + 1] !== "_" && (j === i + 1 || text[j - 1] !== "_")) {
+          end = j;
+          break;
+        }
+      }
       if (end !== -1) {
         flushBuffer();
         tokens.push({ type: "italic", text: text.slice(i + 1, end) });
@@ -526,6 +658,33 @@ function tokenizeInline(text: string): InlineToken[] {
       }
     }
 
+    // --- Emoji shortcode: :name: ---
+    if (text[i] === ":") {
+      const closeColon = text.indexOf(":", i + 1);
+      if (closeColon !== -1 && closeColon - i < 40) {
+        const code = text.slice(i + 1, closeColon);
+        const emoji = emojiMap[code];
+        if (emoji) {
+          flushBuffer();
+          tokens.push({ type: "text", text: emoji });
+          i = closeColon + 1;
+          continue;
+        }
+      }
+    }
+
+    // --- Autolink: bare URLs (https://... or http://...) ---
+    if (text.slice(i, i + 8) === "https://" || text.slice(i, i + 7) === "http://") {
+      const urlMatch = text.slice(i).match(/^(https?:\/\/[^\s<>)\]]+)/);
+      if (urlMatch) {
+        flushBuffer();
+        const url = urlMatch[1];
+        tokens.push({ type: "link", text: url, href: url });
+        i += url.length;
+        continue;
+      }
+    }
+
     // --- Plain text ---
     buffer += text[i];
     i++;
@@ -555,21 +714,39 @@ function parseLink(
   text: string,
   start: number,
 ): { text: string; href: string; end: number } | null {
-  // Expect [text](href)
+  // Expect [text](href) or [text][ref] or [text][]
   const closeBracket = text.indexOf("]", start + 1);
   if (closeBracket === -1) return null;
 
-  // Must be immediately followed by (
-  if (text[closeBracket + 1] !== "(") return null;
+  const linkText = text.slice(start + 1, closeBracket);
 
-  const closeParen = text.indexOf(")", closeBracket + 2);
-  if (closeParen === -1) return null;
+  // Inline link: [text](href "optional title")
+  if (text[closeBracket + 1] === "(") {
+    const closeParen = text.indexOf(")", closeBracket + 2);
+    if (closeParen === -1) return null;
+    // Strip optional title: href may be `url "title"`
+    let href = text.slice(closeBracket + 2, closeParen).trim();
+    const titleMatch = href.match(/^(\S+)\s+"[^"]*"$/);
+    if (titleMatch) href = titleMatch[1];
+    return { text: linkText, href, end: closeParen + 1 };
+  }
 
-  return {
-    text: text.slice(start + 1, closeBracket),
-    href: text.slice(closeBracket + 2, closeParen),
-    end: closeParen + 1,
-  };
+  // Reference link: [text][ref] or [text][]
+  if (text[closeBracket + 1] === "[") {
+    const closeRef = text.indexOf("]", closeBracket + 2);
+    if (closeRef === -1) return null;
+    const refId = text.slice(closeBracket + 2, closeRef).toLowerCase() || linkText.toLowerCase();
+    const href = _refLinks.get(refId);
+    if (href) return { text: linkText, href, end: closeRef + 1 };
+  }
+
+  // Shortcut reference link: [text] where text matches a ref
+  const shortcutHref = _refLinks.get(linkText.toLowerCase());
+  if (shortcutHref) {
+    return { text: linkText, href: shortcutHref, end: closeBracket + 1 };
+  }
+
+  return null;
 }
 
 /**

@@ -12,6 +12,9 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  Heading4,
+  Heading5,
+  Heading6,
   List,
   ListOrdered,
   CheckSquare,
@@ -35,7 +38,7 @@ interface SlashCommandProps {
 }
 
 const CATEGORIES: { label: string; types: BlockType[] }[] = [
-  { label: "Basic", types: ["paragraph", "heading1", "heading2", "heading3"] },
+  { label: "Basic", types: ["paragraph", "heading1", "heading2", "heading3", "heading4", "heading5", "heading6"] },
   { label: "Lists", types: ["bulletList", "numberedList", "todo"] },
   { label: "Advanced", types: ["codeBlock", "quote", "callout", "toggle", "customComponent"] },
   { label: "Media", types: ["divider", "image", "embed", "table", "mermaid"] },
@@ -49,6 +52,9 @@ function getBlockIcon(type: BlockType): React.ReactNode {
     heading1: <Heading1 size={ICON_SIZE} />,
     heading2: <Heading2 size={ICON_SIZE} />,
     heading3: <Heading3 size={ICON_SIZE} />,
+    heading4: <Heading4 size={ICON_SIZE} />,
+    heading5: <Heading5 size={ICON_SIZE} />,
+    heading6: <Heading6 size={ICON_SIZE} />,
     bulletList: <List size={ICON_SIZE} />,
     numberedList: <ListOrdered size={ICON_SIZE} />,
     todo: <CheckSquare size={ICON_SIZE} />,
@@ -189,6 +195,9 @@ export function SlashCommandMenu({ position, filter, onSelect, onClose }: SlashC
         width: 240,
         maxHeight: 340,
         overflowY: "auto",
+        overflowX: "hidden",
+        scrollbarWidth: "thin",
+        scrollbarColor: "rgba(0,0,0,0.15) transparent",
         borderRadius: 10,
         padding: "4px 0",
         backgroundColor: "var(--bg-secondary, #f5f5f5)",

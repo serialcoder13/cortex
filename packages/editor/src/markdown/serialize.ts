@@ -41,6 +41,15 @@ function serializeBlock(block: Block, index: number, siblings: Block[]): string 
     case "heading3":
       return `### ${text}\n\n`;
 
+    case "heading4":
+      return `#### ${text}\n\n`;
+
+    case "heading5":
+      return `##### ${text}\n\n`;
+
+    case "heading6":
+      return `###### ${text}\n\n`;
+
     case "bulletList":
       return serializeListItem(`- ${text}`, block);
 
@@ -180,15 +189,18 @@ function serializeQuote(text: string, block: Block): string {
  * Counts consecutive numberedList blocks preceding this one.
  */
 function computeNumber(index: number, siblings: Block[]): number {
-  let number = 1;
+  // Find the start of this numbered list run
+  let runStart = index;
   for (let i = index - 1; i >= 0; i--) {
     if (siblings[i].type === "numberedList") {
-      number++;
+      runStart = i;
     } else {
       break;
     }
   }
-  return number;
+  // Use startFrom from the first block in the run, default to 1
+  const base = ((siblings[runStart].props.startFrom as number) ?? 1);
+  return base + (index - runStart);
 }
 
 /**

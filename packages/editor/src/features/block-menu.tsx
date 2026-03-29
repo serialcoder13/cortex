@@ -22,10 +22,17 @@ import {
 } from "lucide-react";
 import { BlockType } from "../core/types";
 import { COLOR_TEMPLATES, type ColorTemplate } from "../blocks/TableBlock";
+import type { BulletStyle, NumberStyle } from "../blocks/BlockRenderer";
 
 export interface TableMenuState {
   showBorders: boolean;
   compact: boolean;
+}
+
+export interface ListMenuState {
+  listStyle?: BulletStyle;
+  numberStyle?: NumberStyle;
+  startFrom?: number;
 }
 
 export interface BlockMenuProps {
@@ -43,6 +50,11 @@ export interface BlockMenuProps {
   onToggleBorders?: (blockId: string) => void;
   onToggleCompact?: (blockId: string) => void;
   onApplyColorTemplate?: (blockId: string, template: ColorTemplate) => void;
+  /** List-specific state — only present for bulletList / numberedList */
+  listState?: ListMenuState;
+  onChangeListStyle?: (blockId: string, style: BulletStyle) => void;
+  onChangeNumberStyle?: (blockId: string, style: NumberStyle) => void;
+  onChangeStartFrom?: (blockId: string, startFrom: number) => void;
 }
 
 interface TurnIntoOption {
@@ -166,6 +178,24 @@ function TemplatePreview({ template }: { template: ColorTemplate }) {
   );
 }
 
+// ---- List style options ----
+
+const BULLET_STYLES: { value: BulletStyle; label: string; char: string }[] = [
+  { value: "disc", label: "Disc", char: "•" },
+  { value: "circle", label: "Circle", char: "◦" },
+  { value: "square", label: "Square", char: "▪" },
+  { value: "dash", label: "Dash", char: "–" },
+  { value: "arrow", label: "Arrow", char: "→" },
+];
+
+const NUMBER_STYLES: { value: NumberStyle; label: string; example: string }[] = [
+  { value: "decimal", label: "Numbers", example: "1, 2, 3" },
+  { value: "alpha-lower", label: "Lowercase", example: "a, b, c" },
+  { value: "alpha-upper", label: "Uppercase", example: "A, B, C" },
+  { value: "roman-lower", label: "Roman (lower)", example: "i, ii, iii" },
+  { value: "roman-upper", label: "Roman (upper)", example: "I, II, III" },
+];
+
 export function BlockMenu({
   position,
   blockId,
@@ -180,14 +210,25 @@ export function BlockMenu({
   onToggleBorders,
   onToggleCompact,
   onApplyColorTemplate,
+  listState,
+  onChangeListStyle,
+  onChangeNumberStyle,
+  onChangeStartFrom,
 }: BlockMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [showTurnInto, setShowTurnInto] = useState(false);
   const [showColorTemplates, setShowColorTemplates] = useState(false);
+  const [showListStyles, setShowListStyles] = useState(false);
   const [hoveredSubItem, setHoveredSubItem] = useState<string | null>(null);
+  const [startFromInput, setStartFromInput] = useState<string>(
+    String(listState?.startFrom ?? 1),
+  );
 
   const isTable = blockType === "table";
+  const isBulletList = blockType === "bulletList";
+  const isNumberedList = blockType === "numberedList";
+  const isList = isBulletList || isNumberedList;
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -211,6 +252,7 @@ export function BlockMenu({
   const closeSubmenus = () => {
     setShowTurnInto(false);
     setShowColorTemplates(false);
+    setShowListStyles(false);
   };
 
   const itemStyle = (id: string, extra?: React.CSSProperties): React.CSSProperties => ({
@@ -363,6 +405,185 @@ export function BlockMenu({
                 </div>
               )}
             </div>
+
+            <div style={styles.divider} />
+          </>
+        )}
+
+        {/* List-specific section */}
+        {isList && listState && (
+          <>
+            {/* Bullet style submenu */}
+            {isBulletList && (
+              <div
+                style={{
+                  ...itemStyle("list-style"),
+                  position: "relative" as const,
+                  paddingRight: showListStyles ? 20 : 12,
+                }}
+                onMouseEnter={() => {
+                  setHoveredItem("list-style");
+                  setShowTurnInto(false);
+                  setShowColorTemplates(false);
+                  setShowListStyles(true);
+                }}
+                onMouseLeave={() => {
+                  setHoveredItem(null);
+                  setShowListStyles(false);
+                }}
+              >
+                <div style={styles.submenuTrigger}>
+                  <div style={styles.submenuTriggerLeft}>
+                    <List size={15} />
+                    <span>Bullet style</span>
+                  </div>
+                  <ChevronRight size={14} />
+                </div>
+
+                {showListStyles && (
+                  <div style={styles.submenu}>
+                    {BULLET_STYLES.map((opt) => (
+                      <div
+                        key={opt.value}
+                        style={{
+                          ...styles.item,
+                          ...(hoveredSubItem === opt.value ? styles.itemHover : {}),
+                          ...((listState.listStyle ?? "disc") === opt.value
+                            ? { backgroundColor: "var(--block-menu-active-bg, #e8f0fe)" }
+                            : {}),
+                        }}
+                        onMouseEnter={() => setHoveredSubItem(opt.value)}
+                        onMouseLeave={() => setHoveredSubItem(null)}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onChangeListStyle?.(blockId, opt.value);
+                          onClose();
+                        }}
+                      >
+                        <span style={{ width: 18, textAlign: "center", fontSize: 14 }}>{opt.char}</span>
+                        <span>{opt.label}</span>
+                        {(listState.listStyle ?? "disc") === opt.value && (
+                          <div style={styles.activeIndicator} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Number style submenu */}
+            {isNumberedList && (
+              <>
+                <div
+                  style={{
+                    ...itemStyle("number-style"),
+                    position: "relative" as const,
+                    paddingRight: showListStyles ? 20 : 12,
+                  }}
+                  onMouseEnter={() => {
+                    setHoveredItem("number-style");
+                    setShowTurnInto(false);
+                    setShowColorTemplates(false);
+                    setShowListStyles(true);
+                  }}
+                  onMouseLeave={() => {
+                    setHoveredItem(null);
+                    setShowListStyles(false);
+                  }}
+                >
+                  <div style={styles.submenuTrigger}>
+                    <div style={styles.submenuTriggerLeft}>
+                      <ListOrdered size={15} />
+                      <span>Number format</span>
+                    </div>
+                    <ChevronRight size={14} />
+                  </div>
+
+                  {showListStyles && (
+                    <div style={{ ...styles.submenu, width: 200 }}>
+                      {NUMBER_STYLES.map((opt) => (
+                        <div
+                          key={opt.value}
+                          style={{
+                            ...styles.item,
+                            ...(hoveredSubItem === opt.value ? styles.itemHover : {}),
+                            ...((listState.numberStyle ?? "decimal") === opt.value
+                              ? { backgroundColor: "var(--block-menu-active-bg, #e8f0fe)" }
+                              : {}),
+                          }}
+                          onMouseEnter={() => setHoveredSubItem(opt.value)}
+                          onMouseLeave={() => setHoveredSubItem(null)}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onChangeNumberStyle?.(blockId, opt.value);
+                            onClose();
+                          }}
+                        >
+                          <span style={{ flex: 1 }}>{opt.label}</span>
+                          <span style={{ fontSize: 11, color: "var(--text-muted, #888)" }}>{opt.example}</span>
+                          {(listState.numberStyle ?? "decimal") === opt.value && (
+                            <div style={styles.activeIndicator} />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Start from */}
+                <div
+                  style={{
+                    ...itemStyle("start-from"),
+                    gap: 8,
+                  }}
+                  onMouseEnter={() => {
+                    setHoveredItem("start-from");
+                    closeSubmenus();
+                  }}
+                  onMouseLeave={() => setHoveredItem(null)}
+                >
+                  <ListOrdered size={15} />
+                  <span style={{ flex: 1 }}>Start from</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={startFromInput}
+                    onChange={(e) => setStartFromInput(e.target.value)}
+                    onBlur={() => {
+                      const num = parseInt(startFromInput, 10);
+                      if (!isNaN(num) && num >= 1) {
+                        onChangeStartFrom?.(blockId, num);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") {
+                        const num = parseInt(startFromInput, 10);
+                        if (!isNaN(num) && num >= 1) {
+                          onChangeStartFrom?.(blockId, num);
+                        }
+                        onClose();
+                      }
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    style={{
+                      width: 48,
+                      padding: "2px 6px",
+                      fontSize: 13,
+                      border: "1px solid var(--block-menu-border, #e2e2e2)",
+                      borderRadius: 4,
+                      textAlign: "center",
+                      outline: "none",
+                      backgroundColor: "var(--bg-primary, #fff)",
+                      color: "var(--block-menu-text, #37352f)",
+                    }}
+                  />
+                </div>
+              </>
+            )}
 
             <div style={styles.divider} />
           </>

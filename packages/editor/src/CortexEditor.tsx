@@ -32,6 +32,7 @@ import { BlockRenderer } from "./blocks/BlockRenderer";
 import type { ApplyResult } from "./core/operations";
 import { setBlockTypeOp, moveBlockOp, toggleMark as toggleMarkOp, replaceContent, insertText as insertTextOp, deleteText as deleteTextOp, deleteBlockOp } from "./core/operations";
 import { SlashCommandMenu } from "./features/slash-command";
+import { EmojiPicker } from "./features/emoji-picker";
 import { FloatingToolbar } from "./features/toolbar";
 import { blocksToMarkdown } from "./markdown/serialize";
 import { FindReplaceBar, findInDocument, type FindMatch } from "./features/find-replace";
@@ -71,6 +72,15 @@ export interface CortexEditorRef {
 // ---- Slash Command State ----
 
 interface SlashCommandState {
+  active: boolean;
+  blockId: string;
+  filter: string;
+  position: { x: number; y: number };
+}
+
+// ---- Emoji Picker State ----
+
+interface EmojiPickerState {
   active: boolean;
   blockId: string;
   filter: string;
@@ -340,6 +350,14 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       position: { x: 0, y: 0 },
     });
 
+    // Emoji picker state
+    const [emojiPicker, setEmojiPicker] = useState<EmojiPickerState>({
+      active: false,
+      blockId: "",
+      filter: "",
+      position: { x: 0, y: 0 },
+    });
+
     // Floating toolbar state
     const [toolbar, setToolbar] = useState<ToolbarState>({
       active: false,
@@ -540,6 +558,91 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       setSlashCommand({ active: false, blockId: "", filter: "", position: { x: 0, y: 0 } });
     }, []);
 
+    // ---- Emoji Picker Helpers ----
+
+    /** Check if emoji picker should be active (triggered by `:`) */
+    const updateEmojiPickerState = useCallback(
+      (currentDoc: EditorDocument, sel: EditorSelection | null) => {
+        if (!sel || slashCommand.active) {
+          if (emojiPicker.active) setEmojiPicker(prev => ({ ...prev, active: false }));
+          return;
+        }
+        if (sel.anchor.blockId !== sel.focus.blockId || sel.anchor.offset !== sel.focus.offset) {
+          if (emojiPicker.active) setEmojiPicker(prev => ({ ...prev, active: false }));
+          return;
+        }
+        const block = findBlock(currentDoc, sel.focus.blockId);
+        if (!block) { if (emojiPicker.active) setEmojiPicker(prev => ({ ...prev, active: false })); return; }
+
+        const text = getPlainText(block.content);
+        const offset = sel.focus.offset;
+        const textBeforeCursor = text.slice(0, offset);
+
+        // Find ":" before cursor — must be preceded by space or at position 0
+        const colonIdx = textBeforeCursor.lastIndexOf(":");
+        if (colonIdx !== -1 && (colonIdx === 0 || /\s/.test(text[colonIdx - 1]))) {
+          const filter = textBeforeCursor.slice(colonIdx + 1);
+          // No spaces in filter (emoji names don't have spaces), max 30 chars
+          if (filter.length <= 30 && !/\s/.test(filter)) {
+            const caretRect = getCaretRect();
+            if (caretRect) {
+              setEmojiPicker({
+                active: true,
+                blockId: sel.focus.blockId,
+                filter,
+                position: { x: caretRect.left, y: caretRect.bottom + 4 },
+              });
+              return;
+            }
+          }
+        }
+        if (emojiPicker.active) setEmojiPicker(prev => ({ ...prev, active: false }));
+      },
+      [emojiPicker.active, slashCommand.active],
+    );
+
+    /** Handle emoji selection — replace `:filter` with the emoji character */
+    const handleEmojiSelect = useCallback(
+      (emoji: string) => {
+        const blockId = emojiPicker.blockId;
+        const block = findBlock(docRef.current, blockId);
+        if (!block) return;
+
+        const text = getPlainText(block.content);
+        const sel = selectionRef.current;
+        const cursorOffset = sel?.focus.blockId === blockId ? sel.focus.offset : text.length;
+        const textBeforeCursor = text.slice(0, cursorOffset);
+        const colonIdx = textBeforeCursor.lastIndexOf(":");
+
+        if (colonIdx >= 0) {
+          // Delete `:filter` and insert the emoji character
+          let currentDoc = docRef.current;
+          const delResult = deleteTextOp(currentDoc, blockId, colonIdx, cursorOffset - colonIdx);
+          currentDoc = delResult.doc;
+          const insResult = insertTextOp(currentDoc, blockId, colonIdx, emoji);
+          currentDoc = insResult.doc;
+          setDoc(currentDoc);
+          docRef.current = currentDoc;
+          const newSel: EditorSelection = {
+            anchor: { blockId, offset: colonIdx + emoji.length },
+            focus: { blockId, offset: colonIdx + emoji.length },
+          };
+          setSelection(newSel);
+          selectionRef.current = newSel;
+          onChange?.(currentDoc);
+          resetIdleTimer();
+        }
+
+        setEmojiPicker({ active: false, blockId: "", filter: "", position: { x: 0, y: 0 } });
+      },
+      [emojiPicker.blockId, onChange, resetIdleTimer],
+    );
+
+    /** Close emoji picker */
+    const handleEmojiClose = useCallback(() => {
+      setEmojiPicker({ active: false, blockId: "", filter: "", position: { x: 0, y: 0 } });
+    }, []);
+
     // ---- Floating Toolbar Helpers ----
 
     /** Update toolbar state based on current selection */
@@ -687,13 +790,14 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         setSelection(sel);
         selectionRef.current = sel;
 
-        // Update slash command and toolbar states
+        // Update slash command, emoji picker, and toolbar states
         requestAnimationFrame(() => {
           updateSlashCommandState(docRef.current, sel);
+          updateEmojiPickerState(docRef.current, sel);
           updateToolbarState(docRef.current, sel);
         });
       }
-    }, [updateSlashCommandState, updateToolbarState]);
+    }, [updateSlashCommandState, updateEmojiPickerState, updateToolbarState]);
 
     useEffect(() => {
       document.addEventListener("selectionchange", handleSelectionChange);
@@ -715,6 +819,21 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
             e.preventDefault();
             e.stopPropagation(); // Prevent any further handling
             // Don't handle Enter/etc here — the slash menu's capture-phase listener handles it
+            return;
+          }
+        }
+
+        // If emoji picker is active, let it handle navigation keys
+        if (emojiPicker.active) {
+          if (
+            e.key === "ArrowDown" ||
+            e.key === "ArrowUp" ||
+            e.key === "Enter" ||
+            e.key === "Escape" ||
+            e.key === "Tab"
+          ) {
+            e.preventDefault();
+            e.stopPropagation();
             return;
           }
         }
@@ -798,7 +917,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           apply(result);
         }
       },
-      [readOnly, apply, onChange, slashCommand.active, toolbar.active, handleToolbarClose],
+      [readOnly, apply, onChange, slashCommand.active, emojiPicker.active, toolbar.active, handleToolbarClose],
     );
 
     // ---- Native beforeinput listener ----
@@ -828,11 +947,12 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         if (handled && result.doc) {
           apply(result);
 
-          // After applying, check for slash command trigger
+          // After applying, check for slash command and emoji picker triggers
           requestAnimationFrame(() => {
             const currentSel = selectionRef.current;
             if (currentSel) {
               updateSlashCommandState(docRef.current, currentSel);
+              updateEmojiPickerState(docRef.current, currentSel);
             }
           });
         }
@@ -840,7 +960,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
 
       root.addEventListener("beforeinput", onNativeBeforeInput);
       return () => root.removeEventListener("beforeinput", onNativeBeforeInput);
-    }, [readOnly, apply, updateSlashCommandState]);
+    }, [readOnly, apply, updateSlashCommandState, updateEmojiPickerState]);
 
     const onCompositionStart = useCallback(() => {
       isComposing.current = true;
@@ -1153,7 +1273,17 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
               <BlockRenderer
                 block={
                   block.type === "numberedList"
-                    ? { ...block, props: { ...block.props, number: numberedBlocks.get(block.id) ?? 1 } }
+                    ? (() => {
+                        const info = numberedBlocks.get(block.id);
+                        return {
+                          ...block,
+                          props: {
+                            ...block.props,
+                            number: info?.number ?? 1,
+                            numberStyle: info?.numberStyle ?? block.props.numberStyle ?? "decimal",
+                          },
+                        };
+                      })()
                     : block
                 }
                 readOnly={readOnly}
@@ -1289,6 +1419,47 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
                 }),
               );
             }}
+            // ---- List-specific props ----
+            listState={(() => {
+              const blk = findBlock(docRef.current, blockMenu.blockId);
+              if (!blk || (blk.type !== "bulletList" && blk.type !== "numberedList")) return undefined;
+              return {
+                listStyle: blk.props.listStyle as any,
+                numberStyle: blk.props.numberStyle as any,
+                startFrom: (blk.props.startFrom as number) ?? 1,
+              };
+            })()}
+            onChangeListStyle={(id, style) => {
+              const newDoc = updateBlock(docRef.current, id, (b) => ({
+                ...b,
+                props: { ...b.props, listStyle: style },
+              }));
+              setDoc(newDoc);
+              docRef.current = newDoc;
+              onChange?.(newDoc);
+            }}
+            onChangeNumberStyle={(id, style) => {
+              // Apply numberStyle to the first block in this numbered list run
+              const runLeaderId = findListRunLeader(docRef.current.blocks, id);
+              const newDoc = updateBlock(docRef.current, runLeaderId, (b) => ({
+                ...b,
+                props: { ...b.props, numberStyle: style },
+              }));
+              setDoc(newDoc);
+              docRef.current = newDoc;
+              onChange?.(newDoc);
+            }}
+            onChangeStartFrom={(id, startFrom) => {
+              // Apply startFrom to the first block in this numbered list run
+              const runLeaderId = findListRunLeader(docRef.current.blocks, id);
+              const newDoc = updateBlock(docRef.current, runLeaderId, (b) => ({
+                ...b,
+                props: { ...b.props, startFrom },
+              }));
+              setDoc(newDoc);
+              docRef.current = newDoc;
+              onChange?.(newDoc);
+            }}
           />
         )}
 
@@ -1299,6 +1470,16 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
             filter={slashCommand.filter}
             onSelect={handleSlashSelect}
             onClose={handleSlashClose}
+          />
+        )}
+
+        {/* Emoji Picker — triggered by ":" */}
+        {emojiPicker.active && (
+          <EmojiPicker
+            position={emojiPicker.position}
+            filter={emojiPicker.filter}
+            onSelect={handleEmojiSelect}
+            onClose={handleEmojiClose}
           />
         )}
 
@@ -1448,17 +1629,47 @@ function DebugPanel({ doc, selection }: { doc: EditorDocument; selection: Editor
   );
 }
 
-/** Compute sequential numbers for numbered list items */
-function computeListNumbers(blocks: Block[]): Map<string, number> {
-  const map = new Map<string, number>();
+/** Find the first block ID in a consecutive numberedList run containing the given block */
+function findListRunLeader(blocks: Block[], blockId: string): string {
+  const idx = blocks.findIndex((b) => b.id === blockId);
+  if (idx < 0) return blockId;
+  let leader = idx;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (blocks[i].type === "numberedList") leader = i;
+    else break;
+  }
+  return blocks[leader].id;
+}
+
+/** Info computed for each numbered list item in a run */
+interface ListNumberInfo {
+  number: number;
+  numberStyle: string;
+  startFrom: number;
+}
+
+/** Compute sequential numbers + shared style for numbered list items */
+function computeListNumbers(blocks: Block[]): Map<string, ListNumberInfo> {
+  const map = new Map<string, ListNumberInfo>();
   let counter = 0;
+  let inRun = false;
+  let runStyle = "decimal";
+  let runStart = 1;
 
   for (const block of blocks) {
     if (block.type === "numberedList") {
+      if (!inRun) {
+        // Start of a new run — take style and startFrom from the first item
+        runStart = (block.props.startFrom as number) ?? 1;
+        runStyle = (block.props.numberStyle as string) ?? "decimal";
+        counter = runStart - 1;
+        inRun = true;
+      }
       counter++;
-      map.set(block.id, counter);
+      map.set(block.id, { number: counter, numberStyle: runStyle, startFrom: runStart });
     } else {
       counter = 0;
+      inRun = false;
     }
   }
 
