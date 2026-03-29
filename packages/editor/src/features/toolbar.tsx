@@ -19,6 +19,12 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { Mark, MarkType } from "../core/types";
 
+/**
+ * When true, the toolbar is showing the link URL input and should NOT be
+ * closed by selection changes. Read by CortexEditor's updateToolbarState.
+ */
+export let isToolbarLinkInputActive = false;
+
 interface ToolbarProps {
   /** Screen position (centered above selection) */
   position: { x: number; y: number };
@@ -82,22 +88,33 @@ export function FloatingToolbar({ position, activeMarks, onToggleMark, onClose }
   const linkInputRef = useRef<HTMLInputElement>(null);
   const [openColorDropdown, setOpenColorDropdown] = useState<ColorDropdown>(null);
 
-  // Close on outside click
+  // Close on outside click — but NOT when the link input is showing
+  const showLinkInputRef = useRef(false);
+  showLinkInputRef.current = showLinkInput;
   useEffect(() => {
     function handleMouseDown(e: MouseEvent) {
       if (toolbarRef.current && !toolbarRef.current.contains(e.target as Node)) {
-        onClose();
+        if (!showLinkInputRef.current) {
+          onClose();
+        }
       }
     }
     document.addEventListener("mousedown", handleMouseDown);
     return () => document.removeEventListener("mousedown", handleMouseDown);
   }, [onClose]);
 
-  // Focus the link input when it appears
+  // Save the selection when switching to link input, and focus the input
+  const savedSelectionRef = useRef<Range | null>(null);
   useEffect(() => {
+    isToolbarLinkInputActive = showLinkInput;
     if (showLinkInput) {
-      linkInputRef.current?.focus();
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        savedSelectionRef.current = sel.getRangeAt(0).cloneRange();
+      }
+      setTimeout(() => linkInputRef.current?.focus(), 0);
     }
+    return () => { isToolbarLinkInputActive = false; };
   }, [showLinkInput]);
 
   const toolbarStyle = useMemo(() => {
@@ -124,6 +141,14 @@ export function FloatingToolbar({ position, activeMarks, onToggleMark, onClose }
   }, [onToggleMark]);
 
   const handleLinkSubmit = useCallback(() => {
+    // Restore the saved selection before applying the mark
+    if (savedSelectionRef.current) {
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(savedSelectionRef.current);
+      }
+    }
     if (linkUrl.trim()) {
       let href = linkUrl.trim();
       if (!/^https?:\/\//i.test(href) && !href.startsWith("/")) {
@@ -133,6 +158,7 @@ export function FloatingToolbar({ position, activeMarks, onToggleMark, onClose }
     }
     setShowLinkInput(false);
     setLinkUrl("");
+    savedSelectionRef.current = null;
   }, [linkUrl, onToggleMark]);
 
   const handleLinkKeyDown = useCallback((e: React.KeyboardEvent) => {

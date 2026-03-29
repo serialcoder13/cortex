@@ -33,7 +33,7 @@ import type { ApplyResult } from "./core/operations";
 import { setBlockTypeOp, moveBlockOp, toggleMark as toggleMarkOp, replaceContent, insertText as insertTextOp, deleteText as deleteTextOp, deleteBlockOp } from "./core/operations";
 import { SlashCommandMenu } from "./features/slash-command";
 import { EmojiPicker } from "./features/emoji-picker";
-import { FloatingToolbar } from "./features/toolbar";
+import { FloatingToolbar, isToolbarLinkInputActive } from "./features/toolbar";
 import { blocksToMarkdown } from "./markdown/serialize";
 import { FindReplaceBar, findInDocument, type FindMatch } from "./features/find-replace";
 import { BlockMenu } from "./features/block-menu";
@@ -60,6 +60,12 @@ export interface CortexEditorProps {
   debugMode?: boolean;
   /** CSS class for the outer container */
   className?: string;
+  /**
+   * Called when a user selects an image file for upload.
+   * Should return a Promise resolving to the URL where the image was uploaded.
+   * If not provided, the image is embedded as a base64 data URL.
+   */
+  onImageUpload?: (file: File) => Promise<string>;
 }
 
 export interface CortexEditorRef {
@@ -206,14 +212,24 @@ function DragHandle({
       }, 200);
     };
 
+    // Hide handle when the active block is removed from the DOM
+    const observer = new MutationObserver(() => {
+      if (activeBlockId && !editor.querySelector(`[data-block-id="${activeBlockId}"]`)) {
+        setActiveBlockId(null);
+        setVisible(false);
+      }
+    });
+    observer.observe(editor, { childList: true, subtree: true });
+
     document.addEventListener("mousemove", onMouseMove);
     container.addEventListener("mouseleave", onMouseLeave);
     return () => {
       document.removeEventListener("mousemove", onMouseMove);
       container.removeEventListener("mouseleave", onMouseLeave);
+      observer.disconnect();
       clearTimeout(hideTimer.current);
     };
-  }, [editorRef]);
+  }, [editorRef, activeBlockId]);
 
   const btnStyle: React.CSSProperties = {
     display: "flex",
@@ -327,6 +343,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       readOnly = false,
       debugMode = false,
       className,
+      onImageUpload,
     },
     ref,
   ) {
@@ -648,6 +665,9 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
     /** Update toolbar state based on current selection */
     const updateToolbarState = useCallback(
       (currentDoc: EditorDocument, sel: EditorSelection | null) => {
+        // Don't close the toolbar while the link URL input is showing
+        if (isToolbarLinkInputActive) return;
+
         if (!sel) {
           if (toolbar.active) {
             setToolbar(prev => ({ ...prev, active: false }));
@@ -1178,6 +1198,34 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       globalThis.addEventListener("cortex-table-update", handleTableUpdate);
       return () => globalThis.removeEventListener("cortex-table-update", handleTableUpdate);
     }, [onChange]);
+
+    // ---- Listen for image upload events ----
+    useEffect(() => {
+      const handleImageUpload = async (e: Event) => {
+        const { blockId, dataUrl, fileName, file } = (e as CustomEvent).detail;
+
+        let src: string;
+        if (onImageUpload && file) {
+          try {
+            src = await onImageUpload(file);
+          } catch {
+            src = dataUrl;
+          }
+        } else {
+          src = dataUrl;
+        }
+
+        const newDoc = updateBlock(docRef.current, blockId, (b) => ({
+          ...b,
+          props: { ...b.props, src, alt: fileName ?? "" },
+        }));
+        setDoc(newDoc);
+        docRef.current = newDoc;
+        onChange?.(newDoc);
+      };
+      globalThis.addEventListener("cortex-image-upload", handleImageUpload);
+      return () => globalThis.removeEventListener("cortex-image-upload", handleImageUpload);
+    }, [onChange, onImageUpload]);
 
     // ---- Render ----
     return (

@@ -399,6 +399,8 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
   const alt = block.props.alt ?? "";
   const caption = block.props.caption;
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [mode, setMode] = useState<"upload" | "url">("upload");
+  const [urlInput, setUrlInput] = useState("");
 
   const handleFileSelect = useCallback(
     (file: File) => {
@@ -408,7 +410,7 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
         const dataUrl = reader.result as string;
         globalThis.dispatchEvent(
           new CustomEvent("cortex-image-upload", {
-            detail: { blockId: block.id, dataUrl, fileName: file.name },
+            detail: { blockId: block.id, dataUrl, fileName: file.name, file },
           }),
         );
       };
@@ -416,6 +418,17 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
     },
     [block.id],
   );
+
+  const handleUrlSubmit = useCallback(() => {
+    const url = urlInput.trim();
+    if (!url) return;
+    globalThis.dispatchEvent(
+      new CustomEvent("cortex-image-upload", {
+        detail: { blockId: block.id, dataUrl: url, fileName: "" },
+      }),
+    );
+    setUrlInput("");
+  }, [block.id, urlInput]);
 
   const handleClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -445,46 +458,118 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
   );
 
   if (!src) {
+    const tabStyle = (active: boolean): React.CSSProperties => ({
+      padding: "4px 12px",
+      fontSize: 12,
+      fontWeight: active ? 600 : 400,
+      border: "none",
+      borderBottom: active ? "2px solid var(--accent, #2563eb)" : "2px solid transparent",
+      background: "none",
+      cursor: "pointer",
+      color: active ? "var(--text-primary, #333)" : "var(--text-muted, #999)",
+    });
+
     return (
-      <button
-        type="button"
-        style={{
-          display: "flex",
-          height: 192,
-          width: "100%",
-          cursor: "pointer",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 8,
-          borderRadius: 8,
-          border: "1px dashed",
-          backgroundColor: "transparent",
-          transition: "color 150ms, background-color 150ms",
-          borderColor: "var(--border-secondary)",
-          color: "var(--text-muted)",
-        }}
+      <div
         contentEditable={false}
-        onClick={handleClick}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
+        style={{
+          borderRadius: 8,
+          border: "1px dashed var(--border-secondary, #ddd)",
+          overflow: "hidden",
+        }}
       >
-        <svg style={{ height: 32, width: 32 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"
-          />
-        </svg>
-        <span style={{ fontSize: "0.875rem" }}>Click to upload or drag an image</span>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: "none" }}
-          onChange={handleInputChange}
-        />
-      </button>
+        {/* Tab switcher */}
+        <div style={{ display: "flex", borderBottom: "1px solid var(--border-primary, #eee)", padding: "0 8px" }}>
+          <button type="button" style={tabStyle(mode === "upload")} onClick={() => setMode("upload")}>
+            Upload
+          </button>
+          <button type="button" style={tabStyle(mode === "url")} onClick={() => setMode("url")}>
+            Embed link
+          </button>
+        </div>
+
+        {mode === "upload" ? (
+          <button
+            type="button"
+            style={{
+              display: "flex",
+              height: 160,
+              width: "100%",
+              cursor: "pointer",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              border: "none",
+              backgroundColor: "transparent",
+              color: "var(--text-muted)",
+            }}
+            onClick={handleClick}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            <svg style={{ height: 32, width: 32 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"
+              />
+            </svg>
+            <span style={{ fontSize: 13 }}>Click to upload or drag an image</span>
+            <span style={{ fontSize: 11, color: "var(--text-muted, #bbb)" }}>PNG, JPG, GIF, SVG, WEBP</span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={handleInputChange}
+            />
+          </button>
+        ) : (
+          <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="text"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); handleUrlSubmit(); }
+                  e.stopPropagation();
+                }}
+                placeholder="Paste image URL..."
+                style={{
+                  flex: 1,
+                  padding: "6px 10px",
+                  fontSize: 13,
+                  border: "1px solid var(--border-primary, #ddd)",
+                  borderRadius: 6,
+                  outline: "none",
+                  fontFamily: "inherit",
+                }}
+              />
+              <button
+                type="button"
+                onClick={handleUrlSubmit}
+                style={{
+                  padding: "6px 14px",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  border: "none",
+                  borderRadius: 6,
+                  backgroundColor: urlInput.trim() ? "var(--accent, #2563eb)" : "var(--bg-tertiary, #eee)",
+                  color: urlInput.trim() ? "#fff" : "var(--text-muted, #999)",
+                  cursor: urlInput.trim() ? "pointer" : "default",
+                }}
+              >
+                Embed
+              </button>
+            </div>
+            <span style={{ fontSize: 11, color: "var(--text-muted, #bbb)" }}>
+              Works with any image URL (jpg, png, gif, svg)
+            </span>
+          </div>
+        )}
+      </div>
     );
   }
 
