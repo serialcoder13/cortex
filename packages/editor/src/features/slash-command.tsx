@@ -22,11 +22,11 @@ import {
   Quote,
   Lightbulb,
   ChevronRight,
+  TableOfContents,
   Minus,
   Image,
   Link,
   Table,
-  GitGraph,
   Component,
 } from "lucide-react";
 
@@ -40,8 +40,8 @@ interface SlashCommandProps {
 const CATEGORIES: { label: string; types: BlockType[] }[] = [
   { label: "Basic", types: ["paragraph", "heading1", "heading2", "heading3", "heading4", "heading5", "heading6"] },
   { label: "Lists", types: ["bulletList", "numberedList", "todo"] },
-  { label: "Advanced", types: ["codeBlock", "quote", "callout", "toggle", "customComponent"] },
-  { label: "Media", types: ["divider", "image", "embed", "table", "mermaid"] },
+  { label: "Advanced", types: ["codeBlock", "quote", "callout", "toggle", "toc", "customComponent"] },
+  { label: "Media", types: ["divider", "image", "embed", "table"] },
 ];
 
 const ICON_SIZE = 16;
@@ -66,7 +66,7 @@ function getBlockIcon(type: BlockType): React.ReactNode {
     image: <Image size={ICON_SIZE} />,
     embed: <Link size={ICON_SIZE} />,
     table: <Table size={ICON_SIZE} />,
-    mermaid: <GitGraph size={ICON_SIZE} />,
+    toc: <TableOfContents size={ICON_SIZE} />,
     customComponent: <Component size={ICON_SIZE} />,
   };
   return icons[type] ?? <Type size={ICON_SIZE} />;

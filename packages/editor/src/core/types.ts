@@ -24,7 +24,8 @@ export type BlockType =
   | "embed"
   | "divider"
   | "table"
-  | "mermaid"
+  | "toc"
+  | "list"
   | "customComponent";
 
 /** Inline formatting marks */
@@ -56,6 +57,21 @@ export interface TextSpan {
   marks?: Mark[];
 }
 
+/** A single item within a list block */
+export interface ListItem {
+  id: string;
+  content: TextSpan[];
+  indent: number; // 0 = top-level, 1+ = nested
+}
+
+/** Style for a specific indent level in a list */
+export interface ListLevelStyle {
+  kind: "bullet" | "number";
+  bulletStyle?: string; // disc, circle, square, dash, arrow
+  numberStyle?: string; // decimal, alpha-lower, alpha-upper, roman-lower, roman-upper
+  startFrom?: number;
+}
+
 /** Properties specific to certain block types */
 export interface BlockProps {
   checked?: boolean;
@@ -76,8 +92,8 @@ export interface BlockProps {
   cols?: number;
   tableData?: string[][]; // 2D array of cell contents
   tableHeader?: boolean; // first row is header
-  // mermaid
-  mermaidCode?: string;
+  // table of contents
+  tocLevels?: number; // max heading depth: 1-6 (default 3 = h1-h3)
   // custom component
   componentName?: string;
   componentProps?: Record<string, unknown>;

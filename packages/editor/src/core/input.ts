@@ -15,9 +15,13 @@ import {
   toggleMark,
   setBlockTypeOp,
   insertBlockOp,
+  indentListItem,
+  outdentListItem,
   type ApplyResult,
 } from "./operations";
 import { getOrderedSelection } from "./selection";
+
+const LIST_TYPES = new Set(["bulletList", "numberedList"]);
 
 export interface InputContext {
   doc: EditorDocument;
@@ -121,11 +125,17 @@ export function handleKeyDown(
       return { result, handled: true };
     }
 
-    // If selection is in an empty list/todo/quote block, convert to paragraph
+    // If selection is in an empty list/todo/quote block, convert to paragraph or outdent
     if (!e.shiftKey) {
       const text = getPlainText(block.content);
       const convertableTypes: BlockType[] = ["bulletList", "numberedList", "todo", "quote"];
       if (text === "" && convertableTypes.includes(block.type)) {
+        // If nested, outdent instead of converting to paragraph
+        const isNested = findBlockIndex(doc, block.id) < 0;
+        if (isNested && LIST_TYPES.has(block.type)) {
+          const result = outdentListItem(doc, block.id);
+          return { result: { ...result, selection: { anchor: selection.focus, focus: selection.focus } }, handled: true };
+        }
         const result = setBlockTypeOp(doc, block.id, "paragraph");
         return { result: { ...result, selection: { anchor: selection.focus, focus: selection.focus } }, handled: true };
       }
@@ -159,6 +169,12 @@ export function handleKeyDown(
     if (!block) return NOOP;
 
     if (selection.focus.offset === 0) {
+      // If this is a nested list item (child of another block), outdent it
+      const isNested = findBlockIndex(doc, selection.focus.blockId) < 0;
+      if (isNested && LIST_TYPES.has(block.type)) {
+        const result = outdentListItem(doc, selection.focus.blockId);
+        return { result, handled: true };
+      }
       // At the start of a block — merge backward or convert type
       const result = mergeBlock(doc, selection.focus.blockId, "backward");
       return { result, handled: true };
@@ -195,7 +211,19 @@ export function handleKeyDown(
   // ---- Tab ----
   if (e.key === "Tab") {
     e.preventDefault();
-    // Insert two spaces (simple indent behavior)
+    const focusBlock = findBlock(doc, selection.focus.blockId);
+    if (focusBlock && LIST_TYPES.has(focusBlock.type)) {
+      if (e.shiftKey) {
+        // Shift+Tab: outdent list item
+        const result = outdentListItem(doc, selection.focus.blockId);
+        return { result, handled: true };
+      }
+      // Tab: indent list item (nest under previous sibling)
+      const result = indentListItem(doc, selection.focus.blockId);
+      return { result, handled: true };
+    }
+
+    // Non-list blocks: insert two spaces
     const result = insertText(doc, selection.focus.blockId, selection.focus.offset, "  ");
     return { result, handled: true };
   }

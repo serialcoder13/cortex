@@ -70,13 +70,13 @@
 .cx-placeholder {
   position: absolute;
   left: 0;
-  top: 0;
+  top: 4px;
   color: var(--text-muted, #999);
   pointer-events: none;
   user-select: none;
   font-size: 16px;
-  line-height: 1.6;
-  padding: 4px 0;
+  line-height: 1.625;
+  padding: 0;
 }
 
 /* Slash command and toolbar entry animation */

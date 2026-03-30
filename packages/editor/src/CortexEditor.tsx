@@ -66,6 +66,12 @@ export interface CortexEditorProps {
    * If not provided, the image is embedded as a base64 data URL.
    */
   onImageUpload?: (file: File) => Promise<string>;
+  /**
+   * Called when the user clicks "Upload" on an image block.
+   * Should return a Promise resolving to the image URL (e.g. after showing a custom file picker dialog).
+   * If not provided, the default native file input is used.
+   */
+  onImageBrowse?: () => Promise<string>;
 }
 
 export interface CortexEditorRef {
@@ -339,11 +345,12 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       onIdle,
       onBlur,
       idleDebounceMs = 60_000,
-      placeholder = "Press '/' for commands, or just start typing...",
+      placeholder = "Type here...",
       readOnly = false,
       debugMode = false,
       className,
       onImageUpload,
+      onImageBrowse,
     },
     ref,
   ) {
@@ -536,8 +543,18 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           // "/" is the entire block content → clear and convert type
           const clearResult = replaceContent(currentDoc, blockId, []);
           currentDoc = clearResult.doc;
+          // For list blocks, add default items and levelStyles
+          if (type === "list") {
+            const listProps = {
+              listItems: [{ id: generateId(), content: [{ text: "" }], indent: 0 }],
+              levelStyles: [{ kind: "bullet" }],
+            };
+            const result = setBlockTypeOp(currentDoc, blockId, type, listProps as any);
+            apply(result);
+          } else {
           const result = setBlockTypeOp(currentDoc, blockId, type);
           apply(result);
+          }
           // Explicitly set cursor to start of the converted block
           const newSel: EditorSelection = {
             anchor: { blockId, offset: 0 },
@@ -828,6 +845,10 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       (e: React.KeyboardEvent) => {
         if (readOnly || isComposing.current) return;
 
+        // Skip if event originates from a self-managed block (list, table)
+        const target = e.target as HTMLElement;
+        if (target.closest?.("[data-list-block], [data-table-block]")) return;
+
         // If slash command is active, let the SlashCommandMenu handle these keys
         if (slashCommand.active) {
           if (
@@ -1049,10 +1070,48 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       (e: React.ClipboardEvent) => {
         const sel = selectionRef.current;
         if (readOnly || !sel) return;
+
+        // Check for pasted image files (screenshot paste, copy-paste from other apps)
+        const items = e.clipboardData?.items;
+        if (items) {
+          for (const item of items) {
+            if (item.type.startsWith("image/")) {
+              e.preventDefault();
+              const file = item.getAsFile();
+              if (!file) return;
+
+              // Create an image block after the current block
+              const currentBlockId = sel.focus.blockId;
+              const imgBlock = createBlock("image");
+              let newDoc = insertBlockAfter(docRef.current, currentBlockId, imgBlock);
+              setDoc(newDoc);
+              docRef.current = newDoc;
+              onChange?.(newDoc);
+
+              // Read the file and dispatch the upload event
+              const reader = new FileReader();
+              reader.onload = () => {
+                globalThis.dispatchEvent(
+                  new CustomEvent("cortex-image-upload", {
+                    detail: {
+                      blockId: imgBlock.id,
+                      dataUrl: reader.result as string,
+                      fileName: file.name || "pasted-image",
+                      file,
+                    },
+                  }),
+                );
+              };
+              reader.readAsDataURL(file);
+              return;
+            }
+          }
+        }
+
         const result = handlePaste(docRef.current, sel, e.nativeEvent);
         if (result) apply(result);
       },
-      [readOnly, apply],
+      [readOnly, apply, onChange],
     );
 
     const onEditorBlur = useCallback(() => {
@@ -1167,7 +1226,12 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
 
       const update = () => {
         const textContent = root.textContent?.replace(/\u200B/g, "").trim() ?? "";
-        const show = textContent.length === 0;
+        // Only show placeholder if editor is truly empty (single empty paragraph)
+        // Don't show if there are non-paragraph blocks (divider, image, table, etc.)
+        const hasNonTextBlocks = docRef.current.blocks.some(
+          (b) => b.type !== "paragraph",
+        );
+        const show = textContent.length === 0 && !hasNonTextBlocks;
         if (placeholderRef.current) {
           placeholderRef.current.style.display = show ? "" : "none";
         }
@@ -1199,6 +1263,40 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       return () => globalThis.removeEventListener("cortex-table-update", handleTableUpdate);
     }, [onChange]);
 
+    // ---- Listen for list updates ----
+    useEffect(() => {
+      const handleListUpdate = (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        const newDoc = updateBlock(docRef.current, detail.blockId, (b) => ({
+          ...b,
+          props: { ...b.props, listItems: detail.listItems, levelStyles: detail.levelStyles },
+        }));
+        setDoc(newDoc);
+        docRef.current = newDoc;
+        onChange?.(newDoc);
+      };
+      const handleListExit = (e: Event) => {
+        const { blockId } = (e as CustomEvent).detail;
+        // Convert list block to empty paragraph
+        const newDoc = updateBlock(docRef.current, blockId, (b) => ({
+          ...b,
+          type: "paragraph" as any,
+          content: [{ text: "" }],
+          props: {},
+        }));
+        setDoc(newDoc);
+        docRef.current = newDoc;
+        onChange?.(newDoc);
+        requestAnimationFrame(() => rootRef.current?.focus());
+      };
+      globalThis.addEventListener("cortex-list-update", handleListUpdate);
+      globalThis.addEventListener("cortex-list-exit", handleListExit);
+      return () => {
+        globalThis.removeEventListener("cortex-list-update", handleListUpdate);
+        globalThis.removeEventListener("cortex-list-exit", handleListExit);
+      };
+    }, [onChange]);
+
     // ---- Listen for image upload events ----
     useEffect(() => {
       const handleImageUpload = async (e: Event) => {
@@ -1226,6 +1324,50 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       globalThis.addEventListener("cortex-image-upload", handleImageUpload);
       return () => globalThis.removeEventListener("cortex-image-upload", handleImageUpload);
     }, [onChange, onImageUpload]);
+
+    // ---- Listen for image property updates (resize, alt text, etc.) ----
+    useEffect(() => {
+      const handleImageUpdate = (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        const newDoc = updateBlock(docRef.current, detail.blockId, (b) => {
+          const props = { ...b.props };
+          for (const key of ["width", "height", "alt", "caption", "inline"]) {
+            if (detail[key] !== undefined) (props as any)[key] = detail[key];
+          }
+          return { ...b, props };
+        });
+        setDoc(newDoc);
+        docRef.current = newDoc;
+        onChange?.(newDoc);
+      };
+      globalThis.addEventListener("cortex-image-update", handleImageUpdate);
+      return () => globalThis.removeEventListener("cortex-image-update", handleImageUpdate);
+    }, [onChange]);
+
+    // ---- Listen for custom image browse events ----
+    useEffect(() => {
+      if (!onImageBrowse) return;
+      const handleBrowse = async (e: Event) => {
+        e.preventDefault(); // Signal to ImageBlock that we handled it
+        const { blockId } = (e as CustomEvent).detail;
+        try {
+          const url = await onImageBrowse();
+          if (url) {
+            const newDoc = updateBlock(docRef.current, blockId, (b) => ({
+              ...b,
+              props: { ...b.props, src: url },
+            }));
+            setDoc(newDoc);
+            docRef.current = newDoc;
+            onChange?.(newDoc);
+          }
+        } catch {
+          // User cancelled or browse failed — do nothing
+        }
+      };
+      globalThis.addEventListener("cortex-image-browse", handleBrowse);
+      return () => globalThis.removeEventListener("cortex-image-browse", handleBrowse);
+    }, [onChange, onImageBrowse]);
 
     // ---- Render ----
     return (
@@ -1289,6 +1431,8 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
             const isListItem = listTypes.includes(block.type);
             const prevBlock = blockIndex > 0 ? doc.blocks[blockIndex - 1] : null;
             const isContinuation = isListItem && prevBlock?.type === block.type;
+            // Inline images (multiple on same line) render side-by-side
+            const isInlineImage = block.type === "image" && block.props.inline === true;
             return (
             <div
               key={block.id}
@@ -1298,6 +1442,9 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
                 position: "relative",
                 padding: isContinuation ? "1px 0" : "4px 0",
                 opacity: dragState.draggingBlockId === block.id ? 0.5 : 1,
+                display: isInlineImage ? "inline-block" : undefined,
+                verticalAlign: isInlineImage ? "top" : undefined,
+                maxWidth: isInlineImage ? "48%" : undefined,
               }}
             >
               {/* Drop indicator line */}

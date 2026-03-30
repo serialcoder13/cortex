@@ -24,7 +24,19 @@ export function nextVersion(doc: EditorDocument): EditorDocument {
 
 /** Find a block by ID (flat search — top-level only for now) */
 export function findBlock(doc: EditorDocument, blockId: string): Block | undefined {
-  return doc.blocks.find((b) => b.id === blockId);
+  return findBlockDeep(doc.blocks, blockId);
+}
+
+/** Recursively search blocks and their children for a block by ID */
+function findBlockDeep(blocks: Block[], blockId: string): Block | undefined {
+  for (const b of blocks) {
+    if (b.id === blockId) return b;
+    if (b.children.length > 0) {
+      const found = findBlockDeep(b.children, blockId);
+      if (found) return found;
+    }
+  }
+  return undefined;
 }
 
 /** Find the index of a block by ID */

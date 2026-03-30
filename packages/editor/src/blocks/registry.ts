@@ -24,6 +24,7 @@ export const blockDefinitions: BlockDefinition[] = [
   { type: "heading6", label: "Heading 6", description: "Smallest heading", shortcut: "######", keywords: ["heading", "h6"], hasContent: true },
   { type: "bulletList", label: "Bullet List", description: "Unordered list item", shortcut: "-", keywords: ["bullet", "list", "unordered", "ul"], hasContent: true },
   { type: "numberedList", label: "Numbered List", description: "Ordered list item", shortcut: "1.", keywords: ["numbered", "list", "ordered", "ol"], hasContent: true },
+  { type: "list", label: "Nestable List", description: "List with nesting and configurable styles", shortcut: undefined, keywords: ["nestable", "nested", "outline", "indent"], hasContent: false },
   { type: "todo", label: "To-do", description: "Checkbox item", shortcut: "[]", keywords: ["todo", "checkbox", "task", "check"], hasContent: true },
   { type: "codeBlock", label: "Code", description: "Code block", shortcut: "```", keywords: ["code", "pre", "snippet"], hasContent: true },
   { type: "quote", label: "Quote", description: "Block quote", shortcut: ">", keywords: ["quote", "blockquote", "citation"], hasContent: true },
@@ -33,7 +34,7 @@ export const blockDefinitions: BlockDefinition[] = [
   { type: "image", label: "Image", description: "Upload or embed an image", shortcut: undefined, keywords: ["image", "photo", "picture", "img"], hasContent: false },
   { type: "embed", label: "Embed", description: "Embed a URL", shortcut: undefined, keywords: ["embed", "iframe", "video", "url"], hasContent: false },
   { type: "table", label: "Table", description: "Simple table", shortcut: undefined, keywords: ["table", "grid", "spreadsheet"], hasContent: false },
-  { type: "mermaid", label: "Mermaid", description: "Mermaid diagram", shortcut: undefined, keywords: ["mermaid", "diagram", "chart", "graph", "flowchart", "sequence"], hasContent: false },
+  { type: "toc", label: "Table of Contents", description: "Auto-generated from headings", shortcut: undefined, keywords: ["toc", "table of contents", "outline", "navigation", "index"], hasContent: false },
   { type: "customComponent", label: "Component", description: "Custom component", shortcut: undefined, keywords: ["component", "custom", "widget", "plugin"], hasContent: false },
 ];
 

@@ -5,11 +5,13 @@
 // All colors use CSS variables for theme compatibility.
 // ============================================================
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
+import { Lock, Unlock, Crop } from "lucide-react";
 import type { Block } from "../core/types";
 import { TextContent } from "./TextContent";
 import { getRegisteredComponent } from "./component-registry";
 import { TableBlock } from "./TableBlock";
+import { ListBlock } from "./ListBlock";
 
 interface BlockRendererProps {
   block: Block;
@@ -35,9 +37,9 @@ export function BlockRenderer({ block, readOnly = false, onToggleTodo, onToggleC
     case "heading6":
       return <HeadingBlock block={block} level={6} />;
     case "bulletList":
-      return <BulletListBlock block={block} />;
+      return <BulletListBlock block={block} readOnly={readOnly} />;
     case "numberedList":
-      return <NumberedListBlock block={block} />;
+      return <NumberedListBlock block={block} readOnly={readOnly} />;
     case "todo":
       return <TodoBlock block={block} readOnly={readOnly} onToggle={onToggleTodo} />;
     case "codeBlock":
@@ -54,8 +56,10 @@ export function BlockRenderer({ block, readOnly = false, onToggleTodo, onToggleC
       return <ImageBlock block={block} readOnly={readOnly} />;
     case "table":
       return <TableBlock block={block} readOnly={readOnly} />;
-    case "mermaid":
-      return <MermaidBlock block={block} />;
+    case "list":
+      return <ListBlock block={block} readOnly={readOnly} />;
+    case "toc":
+      return <TocBlock block={block} />;
     case "customComponent":
       return <CustomComponentBlock block={block} />;
     default:
@@ -124,45 +128,84 @@ function toRoman(num: number): string {
   return result;
 }
 
-function BulletListBlock({ block }: { block: Block }) {
-  const style = (block.props.listStyle as BulletStyle) || "disc";
-  const bullet = BULLET_CHARS[style] ?? "•";
+/** Render nested list children with proper data-block-id wrappers */
+function ListChildren({ children, readOnly }: { children: Block[]; readOnly?: boolean }) {
+  if (!children || children.length === 0) return null;
+
+  // Compute sequential numbers for numbered children
+  let counter = 0;
+  const childNumbers = new Map<string, number>();
+  for (const child of children) {
+    if (child.type === "numberedList") {
+      counter++;
+      childNumbers.set(child.id, counter);
+    } else {
+      counter = 0;
+    }
+  }
+
   return (
-    <div style={{ display: "flex", gap: 6, paddingLeft: 4, alignItems: "baseline" }}>
-      <span
-        style={{ userSelect: "none", color: "var(--text-muted, #999)", lineHeight: 1.625, fontSize: "0.8em" }}
-        contentEditable={false}
-      >
-        {bullet}
-      </span>
-      <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
-        <TextContent content={block.content} />
-      </div>
+    <div style={{ marginLeft: 24, marginTop: 2 }}>
+      {children.map((child) => {
+        const renderedChild =
+          child.type === "numberedList"
+            ? { ...child, props: { ...child.props, number: childNumbers.get(child.id) ?? 1 } }
+            : child;
+        return (
+          <div key={child.id} data-block-id={child.id} style={{ padding: "1px 0" }}>
+            <BlockRenderer block={renderedChild} readOnly={readOnly} />
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function NumberedListBlock({ block }: { block: Block }) {
+function BulletListBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
+  const style = (block.props.listStyle as BulletStyle) || "disc";
+  const bullet = BULLET_CHARS[style] ?? "•";
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, paddingLeft: 4, alignItems: "baseline" }}>
+        <span
+          style={{ userSelect: "none", color: "var(--text-muted, #999)", lineHeight: 1.625, fontSize: "0.8em" }}
+          contentEditable={false}
+        >
+          {bullet}
+        </span>
+        <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
+          <TextContent content={block.content} />
+        </div>
+      </div>
+      <ListChildren children={block.children} readOnly={readOnly} />
+    </div>
+  );
+}
+
+function NumberedListBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
   const number = block.props.number ?? 1;
   const style = (block.props.numberStyle as NumberStyle) || "decimal";
   const formatted = formatNumber(number, style);
   const suffix = style === "decimal" ? "." : ")";
   return (
-    <div style={{ display: "flex", gap: 6, paddingLeft: 4, alignItems: "baseline" }}>
-      <span
-        style={{
-          minWidth: "1.2em",
-          textAlign: "right",
-          userSelect: "none",
-          color: "var(--text-muted)",
-        }}
-        contentEditable={false}
-      >
-        {formatted}{suffix}
-      </span>
-      <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
-        <TextContent content={block.content} />
+    <div>
+      <div style={{ display: "flex", gap: 6, paddingLeft: 4, alignItems: "baseline" }}>
+        <span
+          style={{
+            minWidth: "1.2em",
+            textAlign: "right",
+            userSelect: "none",
+            color: "var(--text-muted)",
+          }}
+          contentEditable={false}
+        >
+          {formatted}{suffix}
+        </span>
+        <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
+          <TextContent content={block.content} />
+        </div>
       </div>
+      <ListChildren children={block.children} readOnly={readOnly} />
     </div>
   );
 }
@@ -431,8 +474,17 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
   }, [block.id, urlInput]);
 
   const handleClick = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
+    // Dispatch event to check if a custom browse handler is registered
+    const event = new CustomEvent("cortex-image-browse", {
+      detail: { blockId: block.id },
+      cancelable: true,
+    });
+    const handled = !globalThis.dispatchEvent(event);
+    // If the event was not preventDefault()'d, fall back to native file input
+    if (!handled) {
+      fileInputRef.current?.click();
+    }
+  }, [block.id]);
 
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -456,6 +508,163 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
     },
     [handleFileSelect],
   );
+
+  // --- Image selection, resize, crop, and toolbar state ---
+  const isInline = block.props.inline === true;
+  const [selected, setSelected] = useState(false);
+  const [imgW, setImgW] = useState<number>((block.props.width as number) || 0);
+  const [imgH, setImgH] = useState<number>((block.props.height as number) || 0);
+  const [naturalW, setNaturalW] = useState(0);
+  const [naturalH, setNaturalH] = useState(0);
+  const [editingAlt, setEditingAlt] = useState(false);
+  const [altText, setAltText] = useState(alt as string);
+  const [lockAspect, setLockAspect] = useState(true);
+  const [cropMode, setCropMode] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  const ratio = naturalW && naturalH ? naturalW / naturalH : 1;
+
+  const handleImgLoad = useCallback(() => {
+    const img = imgRef.current;
+    if (!img) return;
+    setNaturalW(img.naturalWidth);
+    setNaturalH(img.naturalHeight);
+    // Use the actual rendered size (respecting maxWidth) not the natural size
+    if (!imgW) {
+      // Wait a frame for layout to settle, then read the actual rendered width
+      requestAnimationFrame(() => {
+        if (img.offsetWidth) {
+          setImgW(img.offsetWidth);
+          setImgH(img.offsetHeight);
+        }
+      });
+    }
+  }, [imgW]);
+
+  const dispatchImageUpdate = useCallback(
+    (props: Record<string, unknown>) => {
+      globalThis.dispatchEvent(
+        new CustomEvent("cortex-image-update", { detail: { blockId: block.id, ...props } }),
+      );
+    },
+    [block.id],
+  );
+
+  // Refs for drag closures
+  const wRef = useRef(imgW); wRef.current = imgW;
+  const hRef = useRef(imgH); hRef.current = imgH;
+  const lockRef = useRef(lockAspect); lockRef.current = lockAspect;
+  const ratioRef = useRef(ratio); ratioRef.current = ratio;
+
+  // Resize: drag bottom-right handle
+  // Locked: width drives height via aspect ratio
+  // Unlocked: both W and H change independently
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startW = imgRef.current?.offsetWidth || 300;
+      const startH = imgRef.current?.offsetHeight || 200;
+
+      const onMouseMove = (ev: MouseEvent) => {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        const newW = Math.max(50, Math.round(startW + dx));
+        if (lockRef.current) {
+          setImgW(newW);
+          setImgH(Math.round(newW / ratioRef.current));
+        } else {
+          const newH = Math.max(50, Math.round(startH + dy));
+          setImgW(newW);
+          setImgH(newH);
+        }
+      };
+      const onMouseUp = () => {
+        dispatchImageUpdate({ width: wRef.current, height: hRef.current });
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [dispatchImageUpdate],
+  );
+
+  // Crop: drag any edge to clip the visible area
+  // Always reads actual rendered size from DOM
+  const handleCropStart = useCallback(
+    (e: React.MouseEvent, edge: "right" | "bottom" | "left" | "top") => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startW = imgRef.current?.offsetWidth || 300;
+      const startH = imgRef.current?.offsetHeight || 200;
+
+      const onMouseMove = (ev: MouseEvent) => {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        if (edge === "right") setImgW(Math.max(50, Math.round(startW + dx)));
+        if (edge === "left") setImgW(Math.max(50, Math.round(startW - dx)));
+        if (edge === "bottom") setImgH(Math.max(50, Math.round(startH + dy)));
+        if (edge === "top") setImgH(Math.max(50, Math.round(startH - dy)));
+      };
+      const onMouseUp = () => {
+        dispatchImageUpdate({ width: wRef.current, height: hRef.current });
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [dispatchImageUpdate],
+  );
+
+  // Sync W/H state from actual DOM size when selected (fixes maxWidth mismatch)
+  React.useEffect(() => {
+    if (selected && imgRef.current) {
+      const renderedW = imgRef.current.offsetWidth;
+      const renderedH = imgRef.current.offsetHeight;
+      if (renderedW && renderedW !== imgW) setImgW(renderedW);
+      if (renderedH && renderedH !== imgH) setImgH(renderedH);
+    }
+  }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deselect on click outside
+  React.useEffect(() => {
+    if (!selected) return;
+    const onClick = (e: MouseEvent) => {
+      const wrapper = imgRef.current?.closest("[data-block-id]");
+      if (wrapper && !wrapper.contains(e.target as Node)) {
+        setSelected(false);
+        dispatchImageUpdate({ width: wRef.current, height: hRef.current });
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [selected, dispatchImageUpdate]);
+
+  // Resize pip (blue, bottom-right only)
+  const resizePipStyle: React.CSSProperties = {
+    position: "absolute", width: 12, height: 12,
+    backgroundColor: "white", border: "2px solid rgba(37, 99, 235, 0.7)",
+    borderRadius: 2, cursor: "nwse-resize", zIndex: 10,
+    bottom: -6, right: -6,
+  };
+
+  // Crop edge handles (dark red bars on each side)
+  const cropEdgeBase: React.CSSProperties = {
+    position: "absolute", backgroundColor: "#991b1b",
+    borderRadius: 3, zIndex: 10, opacity: 0.8,
+  };
+  const cropEdges = {
+    right:  { ...cropEdgeBase, top: "20%", right: -4, width: 6, height: "60%", cursor: "ew-resize" } as React.CSSProperties,
+    left:   { ...cropEdgeBase, top: "20%", left: -4, width: 6, height: "60%", cursor: "ew-resize" } as React.CSSProperties,
+    bottom: { ...cropEdgeBase, left: "20%", bottom: -4, height: 6, width: "60%", cursor: "ns-resize" } as React.CSSProperties,
+    top:    { ...cropEdgeBase, left: "20%", top: -4, height: 6, width: "60%", cursor: "ns-resize" } as React.CSSProperties,
+  };
 
   if (!src) {
     const tabStyle = (active: boolean): React.CSSProperties => ({
@@ -574,8 +783,183 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
   }
 
   return (
-    <div style={{ margin: "8px 0" }} contentEditable={false}>
-      <img src={src} alt={alt} style={{ maxWidth: "100%", borderRadius: 8 }} />
+    <div
+      style={{
+        margin: isInline ? "4px 4px 4px 0" : "8px 0",
+        display: isInline ? "inline-block" : "block",
+        verticalAlign: "top",
+        maxWidth: isInline ? "48%" : undefined,
+      }}
+      contentEditable={false}
+    >
+      {/* Image container with selection + resize/crop */}
+      <div
+        style={{
+          position: "relative",
+          display: "inline-block",
+          maxWidth: "100%",
+          cursor: "pointer",
+          outline: selected ? `2px solid ${cropMode ? "#991b1b" : "rgba(37, 99, 235, 0.5)"}` : undefined,
+          outlineOffset: 2,
+          borderRadius: cropMode ? 0 : 8,
+          overflow: cropMode ? "hidden" : undefined,
+        }}
+        onClick={() => setSelected(!selected)}
+      >
+        <img
+          ref={imgRef}
+          src={src as string}
+          alt={alt as string}
+          onLoad={handleImgLoad}
+          style={{
+            width: imgW || undefined,
+            height: (cropMode || !lockAspect) ? (imgH || undefined) : "auto",
+            maxWidth: cropMode ? "none" : "100%",
+            borderRadius: cropMode ? 0 : 8,
+            display: "block",
+            objectFit: cropMode ? "cover" : undefined,
+          }}
+        />
+
+        {/* Resize mode: single bottom-right handle */}
+        {selected && !cropMode && (
+          <div onMouseDown={handleResizeStart} style={resizePipStyle} />
+        )}
+
+        {/* Crop mode: 4 edge handles */}
+        {selected && cropMode && (
+          <>
+            <div onMouseDown={(e) => handleCropStart(e, "right")} style={cropEdges.right} />
+            <div onMouseDown={(e) => handleCropStart(e, "left")} style={cropEdges.left} />
+            <div onMouseDown={(e) => handleCropStart(e, "bottom")} style={cropEdges.bottom} />
+            <div onMouseDown={(e) => handleCropStart(e, "top")} style={cropEdges.top} />
+          </>
+        )}
+      </div>
+
+      {/* Toolbar — shown when selected */}
+      {selected && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            marginTop: 6,
+            padding: "8px 12px",
+            borderRadius: 8,
+            backgroundColor: "var(--bg-secondary, #f5f5f5)",
+            border: "1px solid var(--border-primary, #e5e5e5)",
+            fontSize: 13,
+            maxWidth: 340,
+          }}
+        >
+          {/* Row 1: W × H + lock + crop */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-secondary, #666)" }}>
+              W
+              <input
+                type="number"
+                value={imgW || ""}
+                onChange={(e) => {
+                  const w = parseInt(e.target.value) || 0;
+                  setImgW(w);
+                  if (lockAspect && ratio && w) setImgH(Math.round(w / ratio));
+                }}
+                onBlur={() => dispatchImageUpdate({ width: imgW, height: imgH })}
+                onKeyDown={(e) => e.stopPropagation()}
+                style={{ width: 70, padding: "4px 6px", border: "1px solid var(--border-primary, #ddd)", borderRadius: 6, fontSize: 13, textAlign: "center" }}
+              />
+            </label>
+            <span style={{ color: "var(--text-muted, #bbb)", fontSize: 14 }}>×</span>
+            <label style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-secondary, #666)" }}>
+              H
+              <input
+                type="number"
+                value={imgH || ""}
+                onChange={(e) => {
+                  const h = parseInt(e.target.value) || 0;
+                  setImgH(h);
+                  if (lockAspect && ratio && h) setImgW(Math.round(h * ratio));
+                }}
+                onBlur={() => dispatchImageUpdate({ width: imgW, height: imgH })}
+                onKeyDown={(e) => e.stopPropagation()}
+                style={{ width: 70, padding: "4px 6px", border: "1px solid var(--border-primary, #ddd)", borderRadius: 6, fontSize: 13, textAlign: "center" }}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setLockAspect(!lockAspect)}
+              title={lockAspect ? "Unlock aspect ratio" : "Lock aspect ratio"}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: lockAspect ? "rgba(37, 99, 235, 0.8)" : "var(--text-muted, #bbb)",
+                padding: "2px 4px",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              {lockAspect ? <Lock size={16} /> : <Unlock size={16} />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCropMode(!cropMode)}
+              title={cropMode ? "Exit crop mode" : "Crop mode"}
+              style={{
+                background: cropMode ? "rgba(37, 99, 235, 0.1)" : "none",
+                border: cropMode ? "1px solid rgba(37, 99, 235, 0.3)" : "none",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: cropMode ? "rgba(37, 99, 235, 0.8)" : "var(--text-muted, #bbb)",
+                padding: "2px 4px",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <Crop size={16} />
+            </button>
+          </div>
+
+          {/* Row 2: Alt text — full width */}
+          {editingAlt ? (
+            <input
+              type="text"
+              value={altText}
+              onChange={(e) => setAltText(e.target.value)}
+              onBlur={() => { dispatchImageUpdate({ alt: altText }); setEditingAlt(false); }}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") { dispatchImageUpdate({ alt: altText }); setEditingAlt(false); }
+                if (e.key === "Escape") setEditingAlt(false);
+              }}
+              autoFocus
+              placeholder="Alt text..."
+              style={{ width: "100%", padding: "4px 8px", border: "1px solid var(--border-primary, #ddd)", borderRadius: 6, fontSize: 13, boxSizing: "border-box" }}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditingAlt(true)}
+              style={{
+                background: "none",
+                border: "1px solid var(--border-primary, #ddd)",
+                borderRadius: 6,
+                cursor: "pointer",
+                padding: "4px 8px",
+                fontSize: 13,
+                color: altText ? "var(--text-secondary, #666)" : "var(--text-muted, #bbb)",
+                textAlign: "left",
+                width: "100%",
+              }}
+            >
+              {altText || "Add alt text"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Caption */}
       {caption && (
         <p style={{ marginTop: 4, textAlign: "center", fontSize: "0.875rem", color: "var(--text-muted)" }}>
           {caption}
@@ -585,104 +969,104 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
   );
 }
 
-function MermaidBlock({ block }: { block: Block }) {
-  const code = block.props.mermaidCode ?? "";
-  const containerId = `mermaid-${block.id}`;
-  const [svg, setSvg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+/** Table of Contents — reads headings from the DOM and renders clickable links */
+function TocBlock({ block }: { block: Block }) {
+  const maxLevel = (block.props.tocLevels as number) ?? 3;
+  const [headings, setHeadings] = useState<{ id: string; text: string; level: number }[]>([]);
+  const tocRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!code) return;
-
-    const mermaid = (window as any).mermaid;
-    if (!mermaid?.render) return;
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const result = await mermaid.render(containerId, code);
-        if (!cancelled) {
-          setSvg(result.svg);
-          setError(null);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Mermaid render error");
-          setSvg(null);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
+  // Scan headings from sibling blocks in the editor DOM
+  const scan = useCallback(() => {
+    const editor = tocRef.current?.closest(".cx-editor");
+    if (!editor) return;
+    const found: { id: string; text: string; level: number }[] = [];
+    const blockEls = editor.querySelectorAll("[data-block-id]");
+    const headingTypes: Record<string, number> = {
+      heading1: 1, heading2: 2, heading3: 3,
+      heading4: 4, heading5: 5, heading6: 6,
     };
-  }, [code, containerId]);
+    blockEls.forEach((el) => {
+      const blockId = (el as HTMLElement).dataset?.blockId ?? "";
+      const contentEl = el.querySelector("[data-content]");
+      if (!contentEl) return;
+      const doc = (globalThis as any).__editorDoc;
+      if (!doc) return;
+      const docBlock = doc.blocks.find((b: any) => b.id === blockId);
+      if (!docBlock) return;
+      const level = headingTypes[docBlock.type];
+      if (level && level <= maxLevel) {
+        const text = docBlock.content.map((s: any) => s.text).join("");
+        if (text.trim()) found.push({ id: blockId, text, level });
+      }
+    });
+    setHeadings(found);
+  }, [maxLevel]);
+
+  // Scan on mount with a small delay, then re-scan periodically
+  React.useEffect(() => {
+    const timeout = setTimeout(scan, 100);
+    const interval = setInterval(scan, 2000);
+    return () => { clearTimeout(timeout); clearInterval(interval); };
+  }, [scan]);
+
+  const handleClick = useCallback((blockId: string) => {
+    const el = document.querySelector(`[data-block-id="${blockId}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
 
   return (
     <div
+      ref={tocRef}
+      contentEditable={false}
       style={{
         margin: "8px 0",
+        padding: "12px 16px",
         borderRadius: 8,
-        border: "1px solid",
-        overflow: "hidden",
-        backgroundColor: "var(--bg-secondary)",
-        borderColor: "var(--border-primary)",
+        backgroundColor: "var(--bg-secondary, #f8f8f8)",
+        border: "1px solid var(--border-primary, #e5e5e5)",
       }}
-      contentEditable={false}
     >
-      <div
-        style={{
-          paddingLeft: 16,
-          paddingRight: 16,
-          paddingTop: 4,
-          paddingBottom: 4,
-          fontSize: "0.75rem",
-          borderBottom: "1px solid",
-          userSelect: "none",
-          color: "var(--text-muted)",
-          borderColor: "var(--border-primary)",
-        }}
-      >
-        Mermaid
+      <div style={{
+        fontSize: 13,
+        fontWeight: 600,
+        marginBottom: 8,
+        color: "var(--text-primary, #333)",
+      }}>
+        Table of contents
       </div>
-      <div style={{ padding: 16 }}>
-        {svg ? (
-          <div dangerouslySetInnerHTML={{ __html: svg }} />
-        ) : error ? (
-          <pre
-            style={{
-              fontFamily: "'SF Mono', 'Fira Code', Menlo, monospace",
-              fontSize: "0.875rem",
-              whiteSpace: "pre-wrap",
-              color: "var(--text-secondary)",
-            }}
-          >
-            {code}
-            {"\n\n"}
-            <span style={{ color: "var(--text-muted)" }}>Error: {error}</span>
-          </pre>
-        ) : (
-          <pre
-            style={{
-              fontFamily: "'SF Mono', 'Fira Code', Menlo, monospace",
-              fontSize: "0.875rem",
-              whiteSpace: "pre-wrap",
-              color: "var(--text-secondary)",
-            }}
-          >
-            {code}
-            {!(window as any).mermaid && (
-              <>
-                {"\n\n"}
-                <span style={{ color: "var(--text-muted)" }}>
-                  Mermaid library not loaded. Include mermaid to render this diagram.
-                </span>
-              </>
-            )}
-          </pre>
-        )}
-      </div>
+      {headings.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--text-muted, #999)", fontStyle: "italic" }}>
+          No headings found. Add headings (H1–H{maxLevel}) to populate this.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {headings.map((h) => (
+            <button
+              key={h.id}
+              type="button"
+              onClick={() => handleClick(h.id)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                textAlign: "left",
+                padding: "2px 0",
+                paddingLeft: (h.level - 1) * 16,
+                fontSize: 14,
+                color: "var(--text-secondary, #555)",
+                textDecoration: "underline",
+                textDecorationColor: "var(--border-primary, #ddd)",
+                textUnderlineOffset: 2,
+                fontFamily: "inherit",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--accent, #2563eb)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "var(--text-secondary, #555)"; }}
+            >
+              {h.text}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

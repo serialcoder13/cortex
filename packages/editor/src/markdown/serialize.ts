@@ -130,9 +130,12 @@ function serializeBlock(block: Block, index: number, siblings: Block[]): string 
       return text + "\n\n";
     }
 
-    case "mermaid": {
-      const code = block.props.mermaidCode || "";
-      return `\`\`\`mermaid\n${code}\n\`\`\`\n\n`;
+    case "list":
+      return serializeListBlock(block) + "\n";
+
+    case "toc": {
+      const levels = block.props.tocLevels ?? 3;
+      return `<!-- cortex-toc:${levels} -->\n\n`;
     }
 
     case "customComponent": {
@@ -314,4 +317,45 @@ function serializeTableMeta(block: Block): string | null {
 
   if (Object.keys(meta).length === 0) return null;
   return JSON.stringify(meta);
+}
+
+/**
+ * Serialize a list block (type="list") to markdown.
+ * Each item becomes a line with appropriate indent and prefix.
+ */
+function serializeListBlock(block: Block): string {
+  const items = (block.props.listItems ?? []) as Array<{
+    content: Array<{ text: string; marks?: any[] }>;
+    indent: number;
+  }>;
+  const levelStyles = (block.props.levelStyles ?? []) as Array<{
+    kind: string;
+    startFrom?: number;
+  }>;
+
+  // Track counters per indent level for numbering
+  const counters: Record<number, number> = {};
+  const lines: string[] = [];
+
+  for (const item of items) {
+    const lvl = item.indent;
+    const style = levelStyles[lvl];
+    const kind = style?.kind ?? "bullet";
+    const indent = "  ".repeat(lvl);
+    const text = item.content.map((s) => s.text).join("");
+
+    // Reset deeper counters when indent decreases
+    for (const key of Object.keys(counters)) {
+      if (Number(key) > lvl) delete counters[Number(key)];
+    }
+
+    if (kind === "number") {
+      counters[lvl] = (counters[lvl] ?? ((style?.startFrom ?? 1) - 1)) + 1;
+      lines.push(`${indent}${counters[lvl]}. ${text}`);
+    } else {
+      lines.push(`${indent}- ${text}`);
+    }
+  }
+
+  return lines.join("\n") + "\n";
 }

@@ -28,6 +28,12 @@ export function writeSelection(root: HTMLElement, sel: Selection): void {
   const domSel = window.getSelection();
   if (!domSel) return;
 
+  // Skip selection write for self-managed blocks (table, list) that handle their own focus
+  const focusBlockEl = root.querySelector(`[data-block-id="${sel.focus.blockId}"]`);
+  if (focusBlockEl?.querySelector("[data-list-block], [data-table-block]")) {
+    return;
+  }
+
   const anchorResult = modelToDom(root, sel.anchor);
   const focusResult = modelToDom(root, sel.focus);
 

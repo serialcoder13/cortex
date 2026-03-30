@@ -12,7 +12,7 @@ import { emojiMap } from "./emoji";
 function extractRefLinks(lines: string[]): Map<string, string> {
   const refs = new Map<string, string>();
   for (const line of lines) {
-    const m = line.match(/^\[([^\]]+)\]:\s+(.+?)(?:\s+"[^"]*")?\s*$/);
+    const m = line.match(/^\[([^\]]+)\]:\s+(\S+)(?:\s+"[^"]*")?(?:\s+'[^']*')?\s*$/);
     if (m && !m[1].startsWith("^")) refs.set(m[1].toLowerCase(), m[2]);
   }
   return refs;
@@ -35,13 +35,6 @@ export function markdownToBlocks(markdown: string): Block[] {
 
     // --- Code block (fenced) ---
     if (line.trimStart().startsWith("```")) {
-      const langHint = line.trimStart().slice(3).trim();
-      if (langHint === "mermaid") {
-        const result = parseMermaidBlock(lines, i);
-        blocks.push(result.block);
-        i = result.nextIndex;
-        continue;
-      }
       const result = parseCodeBlock(lines, i);
       blocks.push(result.block);
       i = result.nextIndex;
@@ -79,6 +72,14 @@ export function markdownToBlocks(markdown: string): Block[] {
         i = result.nextIndex;
         continue;
       }
+    }
+
+    // --- Table of Contents: <!-- cortex-toc:N --> ---
+    const tocMatch = line.trim().match(/^<!--\s*cortex-toc:(\d+)\s*-->$/);
+    if (tocMatch) {
+      blocks.push(makeBlock("toc", [], { tocLevels: parseInt(tocMatch[1]) }));
+      i++;
+      continue;
     }
 
     // --- Table: lines starting with | ---
@@ -126,17 +127,36 @@ export function markdownToBlocks(markdown: string): Block[] {
       continue;
     }
 
-    // --- Image: ![alt](src) ---
-    const imageMatch = line.match(/^!\[([^\]]*)\]\(([^)]*)\)\s*$/);
-    if (imageMatch) {
-      blocks.push(
-        makeBlock("image", [], {
-          alt: imageMatch[1],
-          src: imageMatch[2],
-        }),
-      );
-      i++;
-      continue;
+    // --- Image(s): ![alt](src) or ![alt](src "title") or ![alt][ref] ---
+    // Supports multiple images on the same line (rendered side-by-side)
+    if (line.includes("![")) {
+      const imgRegex = /!\[([^\]]*)\]\(([^)]*)\)|!\[([^\]]*)\]\[([^\]]*)\]/g;
+      let match: RegExpExecArray | null;
+      const images: Block[] = [];
+      while ((match = imgRegex.exec(line)) !== null) {
+        if (match[1] !== undefined && match[2] !== undefined) {
+          // Inline image: ![alt](src "title")
+          let src = match[2].trim();
+          const titleM = src.match(/^(\S+)\s+"[^"]*"$/);
+          if (titleM) src = titleM[1];
+          images.push(makeBlock("image", [], { alt: match[1], src }));
+        } else if (match[3] !== undefined) {
+          // Reference image: ![alt][ref]
+          const alt = match[3];
+          const refId = (match[4] || alt).toLowerCase();
+          const src = _refLinks.get(refId);
+          if (src) images.push(makeBlock("image", [], { alt, src }));
+        }
+      }
+      if (images.length > 0) {
+        // Mark consecutive images for side-by-side rendering
+        if (images.length > 1) {
+          images.forEach((img) => { img.props.inline = true; });
+        }
+        blocks.push(...images);
+        i++;
+        continue;
+      }
     }
 
     // --- Headings (h1-h6) ---
@@ -182,10 +202,12 @@ export function markdownToBlocks(markdown: string): Block[] {
       continue;
     }
 
-    // --- Numbered list: 1. or any digit. (with nested child support) ---
-    const numberedMatch = line.match(/^\d+\.\s+(.*)/);
+    // --- Numbered list: 1. or any digit. (with nested child support + offset) ---
+    const numberedMatch = line.match(/^(\d+)\.\s+(.*)/);
     if (numberedMatch) {
-      const block = makeBlock("numberedList", parseInlineMarks(numberedMatch[1]));
+      const startNum = parseInt(numberedMatch[1]);
+      const block = makeBlock("numberedList", parseInlineMarks(numberedMatch[2]),
+        startNum !== 1 ? { startFrom: startNum } : {});
       i++;
       const childLines: string[] = [];
       while (i < lines.length && /^(\s{2,}|\t)/.test(lines[i]) && lines[i].trim() !== "") {
@@ -316,29 +338,6 @@ export function markdownToBlocks(markdown: string): Block[] {
   }
 
   return blocks;
-}
-
-// ---- Mermaid block parsing ----
-
-function parseMermaidBlock(
-  lines: string[],
-  startIndex: number,
-): { block: Block; nextIndex: number } {
-  const codeLines: string[] = [];
-  let i = startIndex + 1; // Skip opening ```mermaid
-  while (i < lines.length) {
-    if (lines[i].trimStart().startsWith("```")) {
-      i++; // Skip closing ```
-      break;
-    }
-    codeLines.push(lines[i]);
-    i++;
-  }
-
-  return {
-    block: makeBlock("mermaid", [], { mermaidCode: codeLines.join("\n") }),
-    nextIndex: i,
-  };
 }
 
 // ---- Table parsing ----
@@ -500,24 +499,130 @@ function parseToggle(
  * Token types produced by the inline tokenizer.
  */
 interface InlineToken {
-  type: "text" | "bold" | "italic" | "bolditalic" | "strikethrough" | "code" | "underline" | "link";
+  type: "text" | "bold" | "italic" | "bolditalic" | "strikethrough" | "code"
+    | "underline" | "link" | "superscript" | "subscript" | "inserted" | "marked";
   text: string;
   href?: string;
 }
 
+/** Typographic replacement map */
+const TYPOGRAPHIC_REPLACEMENTS: [RegExp, string][] = [
+  [/\(c\)/gi, "\u00A9"],     // ©
+  [/\(r\)/gi, "\u00AE"],     // ®
+  [/\(tm\)/gi, "\u2122"],    // ™
+  [/\(p\)/gi, "\u00A7"],     // § (pilcrow/paragraph)
+  [/\+-/g, "\u00B1"],        // ±
+  [/\.\.\./g, "\u2026"],     // …
+  [/---/g, "\u2014"],        // — em dash
+  [/--/g, "\u2013"],         // – en dash
+  [/!!!!+/g, "!!!"],         // collapse excessive punctuation
+  [/\?\?\?\?+/g, "???"],
+  [/,,/g, ","],
+];
+
+/** Emoticon shortcut map */
+const EMOTICON_MAP: Record<string, string> = {
+  ":-)": "\u{1F642}",   // 🙂
+  ":-(": "\u{1F641}",   // 🙁
+  "8-)": "\u{1F60E}",   // 😎
+  ";)": "\u{1F609}",    // 😉
+  ":-D": "\u{1F603}",   // 😃
+  ":-P": "\u{1F61B}",   // 😛
+  ":-O": "\u{1F62E}",   // 😮
+  ":'(": "\u{1F622}",   // 😢
+  ":-/": "\u{1F615}",   // 😕
+  ":-|": "\u{1F610}",   // 😐
+  ":-*": "\u{1F618}",   // 😘
+  "<3": "\u{2764}\uFE0F", // ❤️
+  "B-)": "\u{1F60E}",   // 😎
+  "o_O": "\u{1F928}",   // 🤨
+  "O_o": "\u{1F928}",
+};
+
+/** Apply typographic replacements and emoticons to text */
+function applyTypography(text: string): string {
+  let result = text;
+  // Smartypants: convert straight quotes to curly
+  result = result.replace(/"([^"]*?)"/g, "\u201C$1\u201D"); // "text" → "text"
+  result = result.replace(/'([^']*?)'/g, "\u2018$1\u2019"); // 'text' → 'text'
+  // Typographic replacements
+  for (const [pattern, replacement] of TYPOGRAPHIC_REPLACEMENTS) {
+    result = result.replace(pattern, replacement);
+  }
+  // Emoticons (replace only when surrounded by spaces or at start/end)
+  for (const [emoticon, emoji] of Object.entries(EMOTICON_MAP)) {
+    const escaped = emoticon.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`(?<=^|\\s)${escaped}(?=\\s|$)`, "g"), emoji);
+  }
+  return result;
+}
+
 /**
  * Parse a markdown string for inline formatting marks and return TextSpan[].
- *
- * Detects: ***bold+italic***, **bold**, *italic*, ~~strikethrough~~,
- * `code`, <u>underline</u>, [text](href)
+ * Supports recursive nesting: bold can contain links, etc.
  */
 export function parseInlineMarks(text: string): TextSpan[] {
-  if (!text) {
-    return [];
-  }
-
+  if (!text) return [];
   const tokens = tokenizeInline(text);
-  return tokens.map(tokenToSpan);
+  return tokensToSpans(tokens);
+}
+
+/**
+ * Convert tokens to spans, recursively parsing inner content of
+ * bold/italic/strikethrough tokens for nested marks (like links).
+ */
+function tokensToSpans(tokens: InlineToken[]): TextSpan[] {
+  const spans: TextSpan[] = [];
+  for (const token of tokens) {
+    switch (token.type) {
+      case "text":
+        spans.push({ text: applyTypography(token.text) });
+        break;
+      case "code":
+        spans.push({ text: token.text, marks: [{ type: "code" }] });
+        break;
+      case "link":
+        spans.push({ text: token.text, marks: [{ type: "link", attrs: { href: token.href || "" } }] });
+        break;
+      case "superscript":
+        spans.push({ text: token.text, marks: [{ type: "superscript" }] });
+        break;
+      case "subscript":
+        spans.push({ text: token.text, marks: [{ type: "subscript" }] });
+        break;
+      case "inserted":
+        spans.push({ text: token.text, marks: [{ type: "underline" }] }); // render as underline
+        break;
+      case "marked":
+        spans.push({ text: token.text, marks: [{ type: "highlight", attrs: { color: "#fff3bf" } }] });
+        break;
+      case "bold":
+      case "italic":
+      case "bolditalic":
+      case "strikethrough":
+      case "underline": {
+        // Recursively parse inner content for nested marks (e.g. bold containing a link)
+        const innerTokens = tokenizeInline(token.text);
+        const innerSpans = tokensToSpans(innerTokens);
+        // Determine which marks to add
+        const outerMarks: Mark[] = [];
+        if (token.type === "bold") outerMarks.push({ type: "bold" });
+        else if (token.type === "italic") outerMarks.push({ type: "italic" });
+        else if (token.type === "bolditalic") { outerMarks.push({ type: "bold" }); outerMarks.push({ type: "italic" }); }
+        else if (token.type === "strikethrough") outerMarks.push({ type: "strikethrough" });
+        else if (token.type === "underline") outerMarks.push({ type: "underline" });
+        // Merge outer marks into each inner span
+        for (const span of innerSpans) {
+          spans.push({
+            text: span.text,
+            marks: [...outerMarks, ...(span.marks ?? [])],
+          });
+        }
+        break;
+      }
+    }
+  }
+  return spans;
 }
 
 /**
@@ -643,6 +748,68 @@ function tokenizeInline(text: string): InlineToken[] {
       }
     }
 
+    // --- Inserted: ++...++ ---
+    if (text.slice(i, i + 2) === "++") {
+      const end = text.indexOf("++", i + 2);
+      if (end !== -1) {
+        flushBuffer();
+        tokens.push({ type: "inserted", text: text.slice(i + 2, end) });
+        i = end + 2;
+        continue;
+      }
+    }
+
+    // --- Marked: ==...== ---
+    if (text.slice(i, i + 2) === "==") {
+      const end = text.indexOf("==", i + 2);
+      if (end !== -1) {
+        flushBuffer();
+        tokens.push({ type: "marked", text: text.slice(i + 2, end) });
+        i = end + 2;
+        continue;
+      }
+    }
+
+    // --- Superscript: ^...^ ---
+    if (text[i] === "^") {
+      const end = text.indexOf("^", i + 1);
+      if (end !== -1 && end - i < 30 && !text.slice(i + 1, end).includes(" ")) {
+        flushBuffer();
+        tokens.push({ type: "superscript", text: text.slice(i + 1, end) });
+        i = end + 1;
+        continue;
+      }
+    }
+
+    // --- Subscript: ~...~ (single tilde, not ~~) ---
+    if (text[i] === "~" && text[i + 1] !== "~") {
+      const end = text.indexOf("~", i + 1);
+      if (end !== -1 && end - i < 30 && !text.slice(i + 1, end).includes(" ")) {
+        flushBuffer();
+        tokens.push({ type: "subscript", text: text.slice(i + 1, end) });
+        i = end + 1;
+        continue;
+      }
+    }
+
+    // --- HTML tags: <sup>, <sub>, <ins>, <mark> ---
+    if (text.slice(i, i + 5) === "<sup>") {
+      const end = text.indexOf("</sup>", i + 5);
+      if (end !== -1) { flushBuffer(); tokens.push({ type: "superscript", text: text.slice(i + 5, end) }); i = end + 6; continue; }
+    }
+    if (text.slice(i, i + 5) === "<sub>") {
+      const end = text.indexOf("</sub>", i + 5);
+      if (end !== -1) { flushBuffer(); tokens.push({ type: "subscript", text: text.slice(i + 5, end) }); i = end + 6; continue; }
+    }
+    if (text.slice(i, i + 5) === "<ins>") {
+      const end = text.indexOf("</ins>", i + 5);
+      if (end !== -1) { flushBuffer(); tokens.push({ type: "inserted", text: text.slice(i + 5, end) }); i = end + 6; continue; }
+    }
+    if (text.slice(i, i + 6) === "<mark>") {
+      const end = text.indexOf("</mark>", i + 6);
+      if (end !== -1) { flushBuffer(); tokens.push({ type: "marked", text: text.slice(i + 6, end) }); i = end + 7; continue; }
+    }
+
     // --- Link: [text](href) ---
     if (text[i] === "[") {
       const result = parseLink(text, i);
@@ -749,35 +916,7 @@ function parseLink(
   return null;
 }
 
-/**
- * Convert an InlineToken to a TextSpan.
- */
-function tokenToSpan(token: InlineToken): TextSpan {
-  switch (token.type) {
-    case "text":
-      return { text: token.text };
-    case "bold":
-      return { text: token.text, marks: [{ type: "bold" }] };
-    case "italic":
-      return { text: token.text, marks: [{ type: "italic" }] };
-    case "bolditalic":
-      return {
-        text: token.text,
-        marks: [{ type: "bold" }, { type: "italic" }],
-      };
-    case "strikethrough":
-      return { text: token.text, marks: [{ type: "strikethrough" }] };
-    case "code":
-      return { text: token.text, marks: [{ type: "code" }] };
-    case "underline":
-      return { text: token.text, marks: [{ type: "underline" }] };
-    case "link":
-      return {
-        text: token.text,
-        marks: [{ type: "link", attrs: { href: token.href || "" } }],
-      };
-  }
-}
+// tokenToSpan removed — replaced by tokensToSpans with recursive nesting
 
 // ---- Helpers ----
 

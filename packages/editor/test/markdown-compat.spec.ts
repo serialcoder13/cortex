@@ -275,6 +275,90 @@ test.describe("Emphasis", () => {
     await expect(s).toBeVisible();
     expect(await s.textContent()).toBe("struck");
   });
+
+  test("bold containing link: __[text](url)__", async ({ page }) => {
+    await loadMarkdown(page, "__[pica](https://example.com)__ - description");
+    const blocks = await getBlocks(page);
+    const spans = blocks[0].content;
+    // Should have a span with both bold and link marks
+    const boldLink = spans.find(
+      (s: any) =>
+        s.marks?.some((m: any) => m.type === "bold") &&
+        s.marks?.some((m: any) => m.type === "link"),
+    );
+    expect(boldLink).toBeTruthy();
+    expect(boldLink?.text).toBe("pica");
+    const linkMark = boldLink?.marks?.find((m: any) => m.type === "link");
+    expect(linkMark?.attrs?.href).toBe("https://example.com");
+  });
+
+  test("^superscript^ syntax", async ({ page }) => {
+    await loadMarkdown(page, "19^th^ century");
+    const blocks = await getBlocks(page);
+    const spans = blocks[0].content;
+    expect(spans.some((s: any) => s.marks?.some((m: any) => m.type === "superscript"))).toBe(true);
+    expect(spans.find((s: any) => s.marks?.some((m: any) => m.type === "superscript"))?.text).toBe("th");
+  });
+
+  test("~subscript~ syntax", async ({ page }) => {
+    await loadMarkdown(page, "H~2~O");
+    const blocks = await getBlocks(page);
+    const spans = blocks[0].content;
+    expect(spans.some((s: any) => s.marks?.some((m: any) => m.type === "subscript"))).toBe(true);
+    expect(spans.find((s: any) => s.marks?.some((m: any) => m.type === "subscript"))?.text).toBe("2");
+  });
+});
+
+// ============================================================
+// SECTION 3b: TYPOGRAPHIC REPLACEMENTS
+// ============================================================
+
+test.describe("Typographic Replacements", () => {
+  test("(c) becomes copyright symbol", async ({ page }) => {
+    await loadMarkdown(page, "(c) (C)");
+    const texts = await getBlockTexts(page);
+    expect(texts[0]).toContain("\u00A9"); // ©
+  });
+
+  test("(r) becomes registered symbol", async ({ page }) => {
+    await loadMarkdown(page, "(r) (R)");
+    const texts = await getBlockTexts(page);
+    expect(texts[0]).toContain("\u00AE"); // ®
+  });
+
+  test("(tm) becomes trademark symbol", async ({ page }) => {
+    await loadMarkdown(page, "(tm) (TM)");
+    const texts = await getBlockTexts(page);
+    expect(texts[0]).toContain("\u2122"); // ™
+  });
+
+  test("+- becomes plus-minus symbol", async ({ page }) => {
+    await loadMarkdown(page, "+-");
+    const texts = await getBlockTexts(page);
+    expect(texts[0]).toContain("\u00B1"); // ±
+  });
+
+  test("-- becomes en dash, --- becomes em dash", async ({ page }) => {
+    await loadMarkdown(page, "a -- b --- c");
+    const texts = await getBlockTexts(page);
+    expect(texts[0]).toContain("\u2013"); // en dash
+    expect(texts[0]).toContain("\u2014"); // em dash
+  });
+
+  test("... becomes ellipsis", async ({ page }) => {
+    await loadMarkdown(page, "test...");
+    const texts = await getBlockTexts(page);
+    expect(texts[0]).toContain("\u2026"); // …
+  });
+
+  test("smart quotes: double and single", async ({ page }) => {
+    await loadMarkdown(page, '"double" and \'single\'');
+    const texts = await getBlockTexts(page);
+    expect(texts[0]).toContain("\u201C"); // "
+    expect(texts[0]).toContain("\u201D"); // "
+    expect(texts[0]).toContain("\u2018"); // '
+    expect(texts[0]).toContain("\u2019"); // '
+  });
 });
 
 // ============================================================
@@ -589,6 +673,50 @@ test.describe("Images", () => {
     const img = blocks.find((b: any) => b.type === "image");
     expect(img?.props.src).toBe("https://example.com/photo.jpg");
   });
+
+  test("image with title: ![alt](src \"title\")", async ({ page }) => {
+    await loadMarkdown(page, '![Cat](https://example.com/cat.jpg "A cute cat")');
+    const blocks = await getBlocks(page);
+    const img = blocks.find((b: any) => b.type === "image");
+    expect(img?.props.src).toBe("https://example.com/cat.jpg");
+    expect(img?.props.alt).toBe("Cat");
+  });
+
+  test("image reference: ![alt][id] with definition", async ({ page }) => {
+    await loadMarkdown(page, '![Dojocat][myimg]\n\n[myimg]: https://example.com/dojocat.jpg "The Dojocat"');
+    const blocks = await getBlocks(page);
+    const img = blocks.find((b: any) => b.type === "image");
+    expect(img).toBeTruthy();
+    expect(img?.props.alt).toBe("Dojocat");
+    expect(img?.props.src).toContain("dojocat.jpg");
+  });
+
+  test("two images on same line render side-by-side", async ({ page }) => {
+    await loadMarkdown(
+      page,
+      "![A](https://octodex.github.com/images/minion.png)![B](https://octodex.github.com/images/stormtroopocat.jpg)",
+    );
+    const blocks = await getBlocks(page);
+    // Should produce 2 image blocks both marked inline
+    const images = blocks.filter((b: any) => b.type === "image");
+    expect(images.length).toBe(2);
+    expect(images[0].props.inline).toBe(true);
+    expect(images[1].props.inline).toBe(true);
+
+    // Visually, the two images should be side-by-side (not stacked)
+    // Check by comparing their Y positions — they should be on the same row
+    await page.waitForTimeout(500);
+    const imgEls = editor(page).locator("img");
+    expect(await imgEls.count()).toBe(2);
+    const box1 = await imgEls.nth(0).boundingBox();
+    const box2 = await imgEls.nth(1).boundingBox();
+    expect(box1).toBeTruthy();
+    expect(box2).toBeTruthy();
+    // Same Y position (within 20px tolerance) = side-by-side
+    expect(Math.abs(box1!.y - box2!.y)).toBeLessThan(20);
+    // Second image should be to the right of the first
+    expect(box2!.x).toBeGreaterThan(box1!.x);
+  });
 });
 
 // ============================================================
@@ -739,6 +867,13 @@ test.describe("Known Gaps — Unsupported Features", () => {
     expect(texts[0]).not.toContain(":wink:");
   });
 
+  test("emoticon shortcuts converted to emoji", async ({ page }) => {
+    await loadMarkdown(page, "Hello :-) and :-(");
+    const texts = await getBlockTexts(page);
+    expect(texts[0]).toContain("\u{1F642}"); // :-)
+    expect(texts[0]).toContain("\u{1F641}"); // :-(
+  });
+
   test("footnotes [GAP] — remain as literal text", async ({ page }) => {
     await loadMarkdown(page, "Text with footnote[^1].\n\n[^1]: Footnote content");
     const texts = await getBlockTexts(page);
@@ -760,18 +895,20 @@ test.describe("Known Gaps — Unsupported Features", () => {
     // IDEAL: HTML would have a tooltip with the full term
   });
 
-  test("++inserted++ [GAP] — remains as literal text", async ({ page }) => {
+  test("++inserted++ renders as underline", async ({ page }) => {
     await loadMarkdown(page, "++Inserted text++");
-    const texts = await getBlockTexts(page);
-    expect(texts[0]).toContain("++Inserted text++");
-    // IDEAL: would render with <ins> element
+    const blocks = await getBlocks(page);
+    const spans = blocks[0].content;
+    expect(spans.some((s: any) => s.marks?.some((m: any) => m.type === "underline"))).toBe(true);
+    expect(spans.find((s: any) => s.marks?.some((m: any) => m.type === "underline"))?.text).toBe("Inserted text");
   });
 
-  test("==marked== [GAP] — remains as literal text", async ({ page }) => {
+  test("==marked== renders as highlight", async ({ page }) => {
     await loadMarkdown(page, "==Marked text==");
-    const texts = await getBlockTexts(page);
-    expect(texts[0]).toContain("==Marked text==");
-    // IDEAL: would render with <mark> highlight
+    const blocks = await getBlocks(page);
+    const spans = blocks[0].content;
+    expect(spans.some((s: any) => s.marks?.some((m: any) => m.type === "highlight"))).toBe(true);
+    expect(spans.find((s: any) => s.marks?.some((m: any) => m.type === "highlight"))?.text).toBe("Marked text");
   });
 });
 
