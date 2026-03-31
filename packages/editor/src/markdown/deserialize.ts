@@ -128,8 +128,22 @@ export function markdownToBlocks(markdown: string): Block[] {
     }
 
     // --- Image(s): ![alt](src) or ![alt](src "title") or ![alt][ref] ---
+    // Optionally followed by {width=N height=N cropX=N cropY=N cropW=N cropH=N}
     // Supports multiple images on the same line (rendered side-by-side)
     if (line.includes("![")) {
+      // Parse trailing {key=value ...} attributes if present
+      const parseImageAttrs = (after: string): Record<string, number> => {
+        const attrs: Record<string, number> = {};
+        const attrMatch = /\{([^}]+)\}/.exec(after);
+        if (attrMatch) {
+          for (const part of attrMatch[1].split(/\s+/)) {
+            const [k, v] = part.split("=");
+            if (k && v && !Number.isNaN(Number(v))) attrs[k] = Number(v);
+          }
+        }
+        return attrs;
+      };
+
       const imgRegex = /!\[([^\]]*)\]\(([^)]*)\)|!\[([^\]]*)\]\[([^\]]*)\]/g;
       let match: RegExpExecArray | null;
       const images: Block[] = [];
@@ -139,13 +153,20 @@ export function markdownToBlocks(markdown: string): Block[] {
           let src = match[2].trim();
           const titleM = src.match(/^(\S+)\s+"[^"]*"$/);
           if (titleM) src = titleM[1];
-          images.push(makeBlock("image", [], { alt: match[1], src }));
+          // Parse attributes from text after the image syntax
+          const afterImg = line.slice(match.index + match[0].length);
+          const attrs = parseImageAttrs(afterImg);
+          images.push(makeBlock("image", [], { alt: match[1], src, ...attrs }));
         } else if (match[3] !== undefined) {
           // Reference image: ![alt][ref]
           const alt = match[3];
           const refId = (match[4] || alt).toLowerCase();
           const src = _refLinks.get(refId);
-          if (src) images.push(makeBlock("image", [], { alt, src }));
+          if (src) {
+            const afterImg = line.slice(match.index + match[0].length);
+            const attrs = parseImageAttrs(afterImg);
+            images.push(makeBlock("image", [], { alt, src, ...attrs }));
+          }
         }
       }
       if (images.length > 0) {
@@ -509,20 +530,30 @@ const TYPOGRAPHIC_REPLACEMENTS: [RegExp, string][] = [
 /** Emoticon shortcut map */
 const EMOTICON_MAP: Record<string, string> = {
   ":-)": "\u{1F642}",   // 🙂
+  ":)": "\u{1F642}",    // 🙂
   ":-(": "\u{1F641}",   // 🙁
+  ":(": "\u{1F641}",    // 🙁
   "8-)": "\u{1F60E}",   // 😎
   ";)": "\u{1F609}",    // 😉
+  ":D": "\u{1F603}",    // 😃
   ":-D": "\u{1F603}",   // 😃
+  ":P": "\u{1F61B}",    // 😛
   ":-P": "\u{1F61B}",   // 😛
+  ":O": "\u{1F62E}",    // 😮
   ":-O": "\u{1F62E}",   // 😮
   ":'(": "\u{1F622}",   // 😢
+  ":/": "\u{1F615}",    // 😕
   ":-/": "\u{1F615}",   // 😕
+  ":|": "\u{1F610}",    // 😐
   ":-|": "\u{1F610}",   // 😐
   ":-*": "\u{1F618}",   // 😘
   "<3": "\u{2764}\uFE0F", // ❤️
   "B-)": "\u{1F60E}",   // 😎
   "o_O": "\u{1F928}",   // 🤨
   "O_o": "\u{1F928}",
+  ":*": "\u{1F618}",    // 😘
+  "XD": "\u{1F606}",    // 😆
+  ">:(": "\u{1F620}",   // 😠
 };
 
 /** Apply typographic replacements and emoticons to text */
@@ -536,7 +567,9 @@ function applyTypography(text: string): string {
     result = result.replace(pattern, replacement);
   }
   // Emoticons (replace only when surrounded by spaces or at start/end)
-  for (const [emoticon, emoji] of Object.entries(EMOTICON_MAP)) {
+  // Sort by length descending so longer emoticons match first (e.g. ":-)" before ":)")
+  const sortedEmoticons = Object.entries(EMOTICON_MAP).sort((a, b) => b[0].length - a[0].length);
+  for (const [emoticon, emoji] of sortedEmoticons) {
     const escaped = emoticon.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     result = result.replace(new RegExp(`(?<=^|\\s)${escaped}(?=\\s|$)`, "g"), emoji);
   }

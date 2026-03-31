@@ -12,6 +12,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { Block, ListItem, ListLevelStyle, TextSpan } from "../core/types";
 import { generateId } from "../core/types";
+import { TextContent } from "./TextContent";
 
 // ---- DOM helpers ----
 
@@ -150,6 +151,11 @@ const MARKER_SIZE_MAP: Record<string, string> = {
   large: "1.1em",
 };
 
+/** Check if content has any inline marks (bold, link, etc.) */
+function hasMarks(content: TextSpan[]): boolean {
+  return content.some((s) => s.marks && s.marks.length > 0);
+}
+
 function ListItemCell({
   item,
   marker,
@@ -173,14 +179,19 @@ function ListItemCell({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const committedRef = useRef(item.content.map((s) => s.text).join(""));
+  const rich = hasMarks(item.content);
 
   useEffect(() => {
-    const text = item.content.map((s) => s.text).join("");
-    if (ref.current && ref.current.textContent !== text && document.activeElement !== ref.current) {
-      ref.current.textContent = text;
-      committedRef.current = text;
+    // Only sync plain text directly when there are no marks.
+    // When marks are present, React renders TextContent children instead.
+    if (!rich) {
+      const text = item.content.map((s) => s.text).join("");
+      if (ref.current && ref.current.textContent !== text) {
+        ref.current.textContent = text;
+        committedRef.current = text;
+      }
     }
-  }, [item.content]);
+  }, [item.content, rich]);
 
   return (
     <div
@@ -231,6 +242,11 @@ function ListItemCell({
         }}
         onKeyDown={(e) => {
           if (e.key === "Tab" || e.key === "Enter" || e.key === "Backspace") {
+            e.stopPropagation();
+            // Mark current DOM text as committed so the upcoming onBlur
+            // (triggered by focus moving to a new item) doesn't overwrite
+            // the structural change made by the key handler.
+            committedRef.current = ref.current?.textContent ?? "";
             onKeyDown(item.id, e);
             return;
           }
@@ -244,7 +260,9 @@ function ListItemCell({
           outline: "none",
           cursor: "text",
         }}
-      />
+      >
+        {rich && <TextContent content={item.content} />}
+      </div>
     </div>
   );
 }
@@ -282,8 +300,15 @@ export function ListBlock({ block, readOnly }: { block: Block; readOnly?: boolea
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync items from props when changed externally
+  // Track whether we initiated the last update (to skip redundant prop syncs)
+  const selfUpdateRef = useRef(false);
+
+  // Sync items from props when changed externally (not by us)
   useEffect(() => {
+    if (selfUpdateRef.current) {
+      selfUpdateRef.current = false;
+      return;
+    }
     const incoming = block.props.listItems as ListItem[] | undefined;
     if (incoming) {
       setItems(incoming);
@@ -303,6 +328,7 @@ export function ListBlock({ block, readOnly }: { block: Block; readOnly?: boolea
       setItems(newItems);
       itemsRef.current = newItems;
       if (newLevelStyles) setLevelStyles(newLevelStyles);
+      selfUpdateRef.current = true;
       globalThis.dispatchEvent(
         new CustomEvent("cortex-list-update", {
           detail: {

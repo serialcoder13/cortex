@@ -400,7 +400,14 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
   const [altText, setAltText] = useState(alt as string);
   const [lockAspect, setLockAspect] = useState(true);
   const [cropMode, setCropMode] = useState(false);
+  // Crop state: position and size of the visible window within the full image
+  const [cropX, setCropX] = useState<number>((block.props.cropX as number) || 0);
+  const [cropY, setCropY] = useState<number>((block.props.cropY as number) || 0);
+  const [cropW, setCropW] = useState<number>((block.props.cropW as number) || 0);
+  const [cropH, setCropH] = useState<number>((block.props.cropH as number) || 0);
+  const isCropped = cropW > 0 && cropH > 0;
   const imgRef = useRef<HTMLImageElement>(null);
+  const cropRef = useRef<HTMLDivElement>(null);
 
   const ratio = naturalW && naturalH ? naturalW / naturalH : 1;
 
@@ -435,6 +442,10 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
   const hRef = useRef(imgH); hRef.current = imgH;
   const lockRef = useRef(lockAspect); lockRef.current = lockAspect;
   const ratioRef = useRef(ratio); ratioRef.current = ratio;
+  const cropXRef = useRef(cropX); cropXRef.current = cropX;
+  const cropYRef = useRef(cropY); cropYRef.current = cropY;
+  const cropWRef = useRef(cropW); cropWRef.current = cropW;
+  const cropHRef = useRef(cropH); cropHRef.current = cropH;
 
   // Resize: drag bottom-right handle
   // Locked: width drives height via aspect ratio
@@ -472,27 +483,52 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
     [dispatchImageUpdate],
   );
 
-  // Crop: drag any edge to clip the visible area
-  // Always reads actual rendered size from DOM
+  // Crop: drag edges to adjust the visible crop window within the full image
+  // cropX/cropY = offset of visible area from top-left of image
+  // cropW/cropH = size of the visible crop window
   const handleCropStart = useCallback(
     (e: React.MouseEvent, edge: "right" | "bottom" | "left" | "top") => {
       e.preventDefault();
       e.stopPropagation();
       const startX = e.clientX;
       const startY = e.clientY;
-      const startW = imgRef.current?.offsetWidth || 300;
-      const startH = imgRef.current?.offsetHeight || 200;
+      const startCropX = cropXRef.current;
+      const startCropY = cropYRef.current;
+      const startCropW = cropWRef.current || wRef.current;
+      const startCropH = cropHRef.current || hRef.current;
+      const fullW = wRef.current;
+      const fullH = hRef.current;
+
+      // Initialize crop if first time
+      if (!cropWRef.current) {
+        setCropW(fullW);
+        setCropH(fullH);
+      }
 
       const onMouseMove = (ev: MouseEvent) => {
         const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
-        if (edge === "right") setImgW(Math.max(50, Math.round(startW + dx)));
-        if (edge === "left") setImgW(Math.max(50, Math.round(startW - dx)));
-        if (edge === "bottom") setImgH(Math.max(50, Math.round(startH + dy)));
-        if (edge === "top") setImgH(Math.max(50, Math.round(startH - dy)));
+        if (edge === "right") {
+          // Shrink/grow from the right: change cropW
+          setCropW(Math.max(50, Math.min(fullW - startCropX, Math.round(startCropW + dx))));
+        } else if (edge === "left") {
+          // Shrink/grow from the left: change cropX and cropW
+          const newX = Math.max(0, Math.min(startCropX + startCropW - 50, Math.round(startCropX + dx)));
+          setCropX(newX);
+          setCropW(startCropW + (startCropX - newX));
+        } else if (edge === "bottom") {
+          setCropH(Math.max(50, Math.min(fullH - startCropY, Math.round(startCropH + dy))));
+        } else if (edge === "top") {
+          const newY = Math.max(0, Math.min(startCropY + startCropH - 50, Math.round(startCropY + dy)));
+          setCropY(newY);
+          setCropH(startCropH + (startCropY - newY));
+        }
       };
       const onMouseUp = () => {
-        dispatchImageUpdate({ width: wRef.current, height: hRef.current });
+        dispatchImageUpdate({
+          cropX: cropXRef.current, cropY: cropYRef.current,
+          cropW: cropWRef.current, cropH: cropHRef.current,
+        });
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
       };
@@ -504,22 +540,30 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
 
   // Sync W/H state from actual DOM size when selected (fixes maxWidth mismatch)
   React.useEffect(() => {
-    if (selected && imgRef.current) {
-      const renderedW = imgRef.current.offsetWidth;
-      const renderedH = imgRef.current.offsetHeight;
-      if (renderedW && renderedW !== imgW) setImgW(renderedW);
-      if (renderedH && renderedH !== imgH) setImgH(renderedH);
+    if (!selected) return;
+    const el = imgRef.current || cropRef.current;
+    if (el) {
+      const renderedW = el.offsetWidth;
+      const renderedH = el.offsetHeight;
+      if (!isCropped && renderedW && renderedW !== imgW) setImgW(renderedW);
+      if (!isCropped && renderedH && renderedH !== imgH) setImgH(renderedH);
     }
   }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Deselect on click outside
+  const containerRef = useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     if (!selected) return;
     const onClick = (e: MouseEvent) => {
-      const wrapper = imgRef.current?.closest("[data-block-id]");
+      const wrapper = containerRef.current;
       if (wrapper && !wrapper.contains(e.target as Node)) {
         setSelected(false);
-        dispatchImageUpdate({ width: wRef.current, height: hRef.current });
+        setCropMode(false);
+        dispatchImageUpdate({
+          width: wRef.current, height: hRef.current,
+          cropX: cropXRef.current, cropY: cropYRef.current,
+          cropW: cropWRef.current, cropH: cropHRef.current,
+        });
       }
     };
     document.addEventListener("mousedown", onClick);
@@ -662,9 +706,17 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
     );
   }
 
+  // In crop mode, compute the active crop region for overlay positioning
+  const activeCropX = cropW ? cropX : 0;
+  const activeCropY = cropW ? cropY : 0;
+  const activeCropW = cropW || imgW;
+  const activeCropH = cropH || imgH;
+
   return (
     <div
+      ref={containerRef}
       style={{
+        position: "relative",
         margin: isInline ? "4px 4px 4px 0" : "8px 0",
         display: isInline ? "inline-block" : "block",
         verticalAlign: "top",
@@ -679,59 +731,111 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
           display: "inline-block",
           maxWidth: "100%",
           cursor: "pointer",
-          outline: selected ? `2px solid ${cropMode ? "#991b1b" : "rgba(37, 99, 235, 0.5)"}` : undefined,
+          outline: selected && !cropMode ? "2px solid rgba(37, 99, 235, 0.5)" : undefined,
           outlineOffset: 2,
-          borderRadius: cropMode ? 0 : 8,
-          overflow: cropMode ? "hidden" : undefined,
+          borderRadius: 8,
         }}
         onClick={() => setSelected(!selected)}
       >
-        <img
-          ref={imgRef}
-          src={src as string}
-          alt={alt as string}
-          onLoad={handleImgLoad}
-          style={{
-            width: imgW || undefined,
-            height: (cropMode || !lockAspect) ? (imgH || undefined) : "auto",
-            maxWidth: cropMode ? "none" : "100%",
-            borderRadius: cropMode ? 0 : 8,
-            display: "block",
-            objectFit: cropMode ? "cover" : undefined,
-          }}
-        />
+        {/* Normal view when cropped: div with background-image showing only crop region */}
+        {isCropped && !cropMode ? (
+          <div
+            ref={cropRef}
+            style={{
+              width: cropW,
+              height: cropH,
+              backgroundImage: `url(${src})`,
+              backgroundSize: `${imgW}px ${imgH}px`,
+              backgroundPosition: `-${cropX}px -${cropY}px`,
+              backgroundRepeat: "no-repeat",
+              borderRadius: 8,
+              display: "block",
+            }}
+          />
+        ) : !cropMode ? (
+          /* Normal view, not cropped: plain img */
+          <img
+            ref={imgRef}
+            src={src as string}
+            alt={alt as string}
+            onLoad={handleImgLoad}
+            style={{
+              width: imgW || undefined,
+              height: !lockAspect ? (imgH || undefined) : "auto",
+              maxWidth: "100%",
+              borderRadius: 8,
+              display: "block",
+            }}
+          />
+        ) : (
+          /* Crop mode: full image with darkened overlay outside crop region */
+          <div style={{ position: "relative", display: "inline-block" }} onClick={(e) => e.stopPropagation()}>
+            {/* Full image (dimmed) */}
+            <img
+              ref={imgRef}
+              src={src as string}
+              alt={alt as string}
+              onLoad={handleImgLoad}
+              style={{
+                width: imgW || undefined,
+                height: !lockAspect ? (imgH || undefined) : "auto",
+                maxWidth: "none",
+                display: "block",
+                opacity: 0.4,
+              }}
+            />
+            {/* Bright crop region overlay */}
+            <div
+              style={{
+                position: "absolute",
+                left: activeCropX,
+                top: activeCropY,
+                width: activeCropW,
+                height: activeCropH,
+                backgroundImage: `url(${src})`,
+                backgroundSize: `${imgW}px ${imgH}px`,
+                backgroundPosition: `-${activeCropX}px -${activeCropY}px`,
+                backgroundRepeat: "no-repeat",
+                border: "2px solid #991b1b",
+                boxSizing: "border-box",
+              }}
+            >
+              {/* Crop edge handles inside the crop region */}
+              <div onMouseDown={(e) => handleCropStart(e, "right")} style={cropEdges.right} />
+              <div onMouseDown={(e) => handleCropStart(e, "left")} style={cropEdges.left} />
+              <div onMouseDown={(e) => handleCropStart(e, "bottom")} style={cropEdges.bottom} />
+              <div onMouseDown={(e) => handleCropStart(e, "top")} style={cropEdges.top} />
+            </div>
+          </div>
+        )}
 
         {/* Resize mode: single bottom-right handle */}
         {selected && !cropMode && (
           <div onMouseDown={handleResizeStart} style={resizePipStyle} />
         )}
-
-        {/* Crop mode: 4 edge handles */}
-        {selected && cropMode && (
-          <>
-            <div onMouseDown={(e) => handleCropStart(e, "right")} style={cropEdges.right} />
-            <div onMouseDown={(e) => handleCropStart(e, "left")} style={cropEdges.left} />
-            <div onMouseDown={(e) => handleCropStart(e, "bottom")} style={cropEdges.bottom} />
-            <div onMouseDown={(e) => handleCropStart(e, "top")} style={cropEdges.top} />
-          </>
-        )}
       </div>
 
-      {/* Toolbar — shown when selected */}
+      {/* Toolbar — shown when selected, floats above content */}
       {selected && (
         <div
           style={{
+            position: "absolute",
+            left: 0,
+            top: "100%",
+            marginTop: 6,
             display: "flex",
             flexDirection: "column",
             gap: 6,
-            marginTop: 6,
             padding: "8px 12px",
             borderRadius: 8,
             backgroundColor: "var(--bg-secondary, #f5f5f5)",
             border: "1px solid var(--border-primary, #e5e5e5)",
             fontSize: 13,
             maxWidth: 340,
+            zIndex: 20,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
           }}
+          onMouseDown={(e) => e.stopPropagation()}
         >
           {/* Row 1: W × H + lock + crop */}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -784,7 +888,16 @@ function ImageBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
             </button>
             <button
               type="button"
-              onClick={() => setCropMode(!cropMode)}
+              onClick={() => {
+                if (!cropMode && imgW && imgH) {
+                  // Entering crop mode: initialize crop to full image if not already set
+                  if (!cropW || !cropH) {
+                    setCropX(0); setCropY(0);
+                    setCropW(imgW); setCropH(imgH);
+                  }
+                }
+                setCropMode(!cropMode);
+              }}
               title={cropMode ? "Exit crop mode" : "Crop mode"}
               style={{
                 background: cropMode ? "rgba(37, 99, 235, 0.1)" : "none",

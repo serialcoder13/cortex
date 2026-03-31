@@ -91,7 +91,17 @@ function serializeBlock(block: Block, index: number, siblings: Block[]): string 
     case "image": {
       const alt = block.props.alt || "";
       const src = block.props.src || "";
-      return `![${alt}](${src})\n\n`;
+      // Build attribute string for width/height and crop data
+      const attrs: string[] = [];
+      const w = Number(block.props.width); const h = Number(block.props.height);
+      if (w) attrs.push(`width=${w}`);
+      if (h) attrs.push(`height=${h}`);
+      if (Number(block.props.cropX)) attrs.push(`cropX=${Number(block.props.cropX)}`);
+      if (Number(block.props.cropY)) attrs.push(`cropY=${Number(block.props.cropY)}`);
+      if (Number(block.props.cropW)) attrs.push(`cropW=${Number(block.props.cropW)}`);
+      if (Number(block.props.cropH)) attrs.push(`cropH=${Number(block.props.cropH)}`);
+      const attrStr = attrs.length ? `{${attrs.join(" ")}}` : "";
+      return `![${alt}](${src})${attrStr}\n\n`;
     }
 
     case "embed": {

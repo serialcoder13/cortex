@@ -1352,7 +1352,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         const detail = (e as CustomEvent).detail;
         const newDoc = updateBlock(docRef.current, detail.blockId, (b) => {
           const props = { ...b.props };
-          for (const key of ["width", "height", "alt", "caption", "inline"]) {
+          for (const key of ["width", "height", "alt", "caption", "inline", "cropX", "cropY", "cropW", "cropH"]) {
             if (detail[key] !== undefined) (props as any)[key] = detail[key];
           }
           return { ...b, props };

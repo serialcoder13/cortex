@@ -84,6 +84,11 @@ export interface BlockProps {
   src?: string;
   alt?: string;
   caption?: string;
+  // image crop (position of visible area within the full image)
+  cropX?: number;
+  cropY?: number;
+  cropW?: number;
+  cropH?: number;
   // embed
   url?: string;
   // callout
