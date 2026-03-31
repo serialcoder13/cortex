@@ -36,10 +36,8 @@ export function BlockRenderer({ block, readOnly = false, onToggleTodo, onToggleC
       return <HeadingBlock block={block} level={5} />;
     case "heading6":
       return <HeadingBlock block={block} level={6} />;
-    case "bulletList":
-      return <BulletListBlock block={block} readOnly={readOnly} />;
-    case "numberedList":
-      return <NumberedListBlock block={block} readOnly={readOnly} />;
+    case "list":
+      return <ListBlock block={block} readOnly={readOnly} />;
     case "todo":
       return <TodoBlock block={block} readOnly={readOnly} onToggle={onToggleTodo} />;
     case "codeBlock":
@@ -56,8 +54,6 @@ export function BlockRenderer({ block, readOnly = false, onToggleTodo, onToggleC
       return <ImageBlock block={block} readOnly={readOnly} />;
     case "table":
       return <TableBlock block={block} readOnly={readOnly} />;
-    case "list":
-      return <ListBlock block={block} readOnly={readOnly} />;
     case "toc":
       return <TocBlock block={block} />;
     case "customComponent":
@@ -90,122 +86,6 @@ function HeadingBlock({ block, level }: { block: Block; level: 1 | 2 | 3 | 4 | 5
   return (
     <div data-content style={{ minHeight: "1.2em", ...styles[level] }}>
       <TextContent content={block.content} />
-    </div>
-  );
-}
-
-// ---- List style helpers ----
-
-export type BulletStyle = "disc" | "circle" | "square" | "dash" | "arrow";
-export type NumberStyle = "decimal" | "alpha-lower" | "alpha-upper" | "roman-lower" | "roman-upper";
-
-const BULLET_CHARS: Record<BulletStyle, string> = {
-  disc: "•",
-  circle: "◦",
-  square: "▪",
-  dash: "–",
-  arrow: "→",
-};
-
-function formatNumber(n: number, style: NumberStyle): string {
-  switch (style) {
-    case "alpha-lower": return String.fromCharCode(96 + ((n - 1) % 26) + 1);
-    case "alpha-upper": return String.fromCharCode(64 + ((n - 1) % 26) + 1);
-    case "roman-lower": return toRoman(n).toLowerCase();
-    case "roman-upper": return toRoman(n);
-    default: return String(n);
-  }
-}
-
-function toRoman(num: number): string {
-  const vals = [1000,900,500,400,100,90,50,40,10,9,5,4,1];
-  const syms = ["M","CM","D","CD","C","XC","L","XL","X","IX","V","IV","I"];
-  let result = "";
-  let n = Math.max(1, Math.min(num, 3999));
-  for (let i = 0; i < vals.length; i++) {
-    while (n >= vals[i]) { result += syms[i]; n -= vals[i]; }
-  }
-  return result;
-}
-
-/** Render nested list children with proper data-block-id wrappers */
-function ListChildren({ children, readOnly }: { children: Block[]; readOnly?: boolean }) {
-  if (!children || children.length === 0) return null;
-
-  // Compute sequential numbers for numbered children
-  let counter = 0;
-  const childNumbers = new Map<string, number>();
-  for (const child of children) {
-    if (child.type === "numberedList") {
-      counter++;
-      childNumbers.set(child.id, counter);
-    } else {
-      counter = 0;
-    }
-  }
-
-  return (
-    <div style={{ marginLeft: 24, marginTop: 2 }}>
-      {children.map((child) => {
-        const renderedChild =
-          child.type === "numberedList"
-            ? { ...child, props: { ...child.props, number: childNumbers.get(child.id) ?? 1 } }
-            : child;
-        return (
-          <div key={child.id} data-block-id={child.id} style={{ padding: "1px 0" }}>
-            <BlockRenderer block={renderedChild} readOnly={readOnly} />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function BulletListBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
-  const style = (block.props.listStyle as BulletStyle) || "disc";
-  const bullet = BULLET_CHARS[style] ?? "•";
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 6, paddingLeft: 4, alignItems: "baseline" }}>
-        <span
-          style={{ userSelect: "none", color: "var(--text-muted, #999)", lineHeight: 1.625, fontSize: "0.8em" }}
-          contentEditable={false}
-        >
-          {bullet}
-        </span>
-        <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
-          <TextContent content={block.content} />
-        </div>
-      </div>
-      <ListChildren children={block.children} readOnly={readOnly} />
-    </div>
-  );
-}
-
-function NumberedListBlock({ block, readOnly }: { block: Block; readOnly?: boolean }) {
-  const number = block.props.number ?? 1;
-  const style = (block.props.numberStyle as NumberStyle) || "decimal";
-  const formatted = formatNumber(number, style);
-  const suffix = style === "decimal" ? "." : ")";
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 6, paddingLeft: 4, alignItems: "baseline" }}>
-        <span
-          style={{
-            minWidth: "1.2em",
-            textAlign: "right",
-            userSelect: "none",
-            color: "var(--text-muted)",
-          }}
-          contentEditable={false}
-        >
-          {formatted}{suffix}
-        </span>
-        <div data-content style={{ minHeight: "1.5em", flex: 1, lineHeight: 1.625 }}>
-          <TextContent content={block.content} />
-        </div>
-      </div>
-      <ListChildren children={block.children} readOnly={readOnly} />
     </div>
   );
 }

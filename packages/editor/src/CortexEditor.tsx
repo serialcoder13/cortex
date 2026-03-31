@@ -37,7 +37,7 @@ import { FloatingToolbar, isToolbarLinkInputActive } from "./features/toolbar";
 import { blocksToMarkdown } from "./markdown/serialize";
 import { FindReplaceBar, findInDocument, type FindMatch } from "./features/find-replace";
 import { BlockMenu } from "./features/block-menu";
-import { GripVertical, Plus, Trash2, Copy, ArrowUpDown, Type as TypeIcon, Heading1, Heading2, Heading3, List, ListOrdered, CheckSquare, Code, Quote, Lightbulb } from "lucide-react";
+import { GripVertical, Plus, Trash2, Copy, ArrowUpDown, Type as TypeIcon, Heading1, Heading2, Heading3, List, CheckSquare, Code, Quote, Lightbulb } from "lucide-react";
 
 // ---- Public API Types ----
 
@@ -567,7 +567,12 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           const delResult = deleteTextOp(currentDoc, blockId, slashIdx, slashEnd - slashIdx);
           currentDoc = delResult.doc;
           // Insert a new block of the selected type after this one
-          const newBlock = createBlock(type);
+          const newBlock = type === "list"
+            ? createBlock(type, "", {
+                listItems: [{ id: generateId(), content: [{ text: "" }], indent: 0 }],
+                levelStyles: [{ kind: "bullet" }],
+              })
+            : createBlock(type);
           currentDoc = insertBlockAfter(currentDoc, blockId, newBlock);
           setDoc(currentDoc);
           docRef.current = currentDoc;
@@ -1180,9 +1185,6 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
       [doc],
     );
 
-    // ---- Number list items ----
-    const numberedBlocks = computeListNumbers(doc.blocks);
-
     // ---- Imperative handle ----
     useImperativeHandle(
       ref,
@@ -1289,11 +1291,30 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
         onChange?.(newDoc);
         requestAnimationFrame(() => rootRef.current?.focus());
       };
+      const handleListExitSplit = (e: Event) => {
+        const { blockId } = (e as CustomEvent).detail;
+        // Insert a new empty paragraph after the list block
+        const newBlock = createBlock("paragraph");
+        const newDoc = insertBlockAfter(docRef.current, blockId, newBlock);
+        setDoc(newDoc);
+        docRef.current = newDoc;
+        onChange?.(newDoc);
+        // Focus the new paragraph
+        const newSel: EditorSelection = {
+          anchor: { blockId: newBlock.id, offset: 0 },
+          focus: { blockId: newBlock.id, offset: 0 },
+        };
+        setSelection(newSel);
+        selectionRef.current = newSel;
+        requestAnimationFrame(() => rootRef.current?.focus());
+      };
       globalThis.addEventListener("cortex-list-update", handleListUpdate);
       globalThis.addEventListener("cortex-list-exit", handleListExit);
+      globalThis.addEventListener("cortex-list-exit-split", handleListExitSplit);
       return () => {
         globalThis.removeEventListener("cortex-list-update", handleListUpdate);
         globalThis.removeEventListener("cortex-list-exit", handleListExit);
+        globalThis.removeEventListener("cortex-list-exit-split", handleListExitSplit);
       };
     }, [onChange]);
 
@@ -1426,11 +1447,8 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
           spellCheck
         >
           {doc.blocks.map((block, blockIndex) => {
-            // Reduce spacing between consecutive list items of the same type
-            const listTypes = ["bulletList", "numberedList", "todo"];
-            const isListItem = listTypes.includes(block.type);
             const prevBlock = blockIndex > 0 ? doc.blocks[blockIndex - 1] : null;
-            const isContinuation = isListItem && prevBlock?.type === block.type;
+            const isContinuation = block.type === "todo" && prevBlock?.type === "todo";
             // Inline images (multiple on same line) render side-by-side
             const isInlineImage = block.type === "image" && block.props.inline === true;
             return (
@@ -1466,21 +1484,7 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
               )}
 
               <BlockRenderer
-                block={
-                  block.type === "numberedList"
-                    ? (() => {
-                        const info = numberedBlocks.get(block.id);
-                        return {
-                          ...block,
-                          props: {
-                            ...block.props,
-                            number: info?.number ?? 1,
-                            numberStyle: info?.numberStyle ?? block.props.numberStyle ?? "decimal",
-                          },
-                        };
-                      })()
-                    : block
-                }
+                block={block}
                 readOnly={readOnly}
                 onToggleTodo={onToggleTodo}
                 onToggleCollapse={onToggleCollapse}
@@ -1570,6 +1574,34 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
               }
               setBlockMenu({ open: false, blockId: "", position: { x: 0, y: 0 } });
             }}
+            // ---- List-specific props ----
+            listState={(() => {
+              const blk = findBlock(docRef.current, blockMenu.blockId);
+              if (blk?.type !== "list") return undefined;
+              const listItems = (blk.props.listItems ?? []) as Array<{ indent: number }>;
+              const levelStyles = (blk.props.levelStyles ?? []) as Array<{ kind: string; bulletStyle?: string; numberStyle?: string }>;
+              const usedLevels = Math.max(1, ...listItems.map((it) => it.indent + 1));
+              return { levelStyles: levelStyles as any, usedLevels };
+            })()}
+            onChangeLevelStyle={(id, level, newStyle) => {
+              const blk = findBlock(docRef.current, id);
+              if (!blk) return;
+              const levelStyles = [...((blk.props.levelStyles ?? []) as any[])];
+              // Ensure array is long enough
+              while (levelStyles.length <= level) {
+                levelStyles.push({ kind: "bullet" });
+              }
+              levelStyles[level] = newStyle;
+              globalThis.dispatchEvent(
+                new CustomEvent("cortex-list-update", {
+                  detail: {
+                    blockId: id,
+                    listItems: blk.props.listItems,
+                    levelStyles,
+                  },
+                }),
+              );
+            }}
             // ---- Table-specific props ----
             tableState={(() => {
               const blk = findBlock(docRef.current, blockMenu.blockId);
@@ -1613,47 +1645,6 @@ export const CortexEditor = forwardRef<CortexEditorRef, CortexEditorProps>(
                   detail: { blockId: id, tableData: tableData, cellMeta, colorTemplate },
                 }),
               );
-            }}
-            // ---- List-specific props ----
-            listState={(() => {
-              const blk = findBlock(docRef.current, blockMenu.blockId);
-              if (!blk || (blk.type !== "bulletList" && blk.type !== "numberedList")) return undefined;
-              return {
-                listStyle: blk.props.listStyle as any,
-                numberStyle: blk.props.numberStyle as any,
-                startFrom: (blk.props.startFrom as number) ?? 1,
-              };
-            })()}
-            onChangeListStyle={(id, style) => {
-              const newDoc = updateBlock(docRef.current, id, (b) => ({
-                ...b,
-                props: { ...b.props, listStyle: style },
-              }));
-              setDoc(newDoc);
-              docRef.current = newDoc;
-              onChange?.(newDoc);
-            }}
-            onChangeNumberStyle={(id, style) => {
-              // Apply numberStyle to the first block in this numbered list run
-              const runLeaderId = findListRunLeader(docRef.current.blocks, id);
-              const newDoc = updateBlock(docRef.current, runLeaderId, (b) => ({
-                ...b,
-                props: { ...b.props, numberStyle: style },
-              }));
-              setDoc(newDoc);
-              docRef.current = newDoc;
-              onChange?.(newDoc);
-            }}
-            onChangeStartFrom={(id, startFrom) => {
-              // Apply startFrom to the first block in this numbered list run
-              const runLeaderId = findListRunLeader(docRef.current.blocks, id);
-              const newDoc = updateBlock(docRef.current, runLeaderId, (b) => ({
-                ...b,
-                props: { ...b.props, startFrom },
-              }));
-              setDoc(newDoc);
-              docRef.current = newDoc;
-              onChange?.(newDoc);
             }}
           />
         )}
@@ -1824,49 +1815,3 @@ function DebugPanel({ doc, selection }: { doc: EditorDocument; selection: Editor
   );
 }
 
-/** Find the first block ID in a consecutive numberedList run containing the given block */
-function findListRunLeader(blocks: Block[], blockId: string): string {
-  const idx = blocks.findIndex((b) => b.id === blockId);
-  if (idx < 0) return blockId;
-  let leader = idx;
-  for (let i = idx - 1; i >= 0; i--) {
-    if (blocks[i].type === "numberedList") leader = i;
-    else break;
-  }
-  return blocks[leader].id;
-}
-
-/** Info computed for each numbered list item in a run */
-interface ListNumberInfo {
-  number: number;
-  numberStyle: string;
-  startFrom: number;
-}
-
-/** Compute sequential numbers + shared style for numbered list items */
-function computeListNumbers(blocks: Block[]): Map<string, ListNumberInfo> {
-  const map = new Map<string, ListNumberInfo>();
-  let counter = 0;
-  let inRun = false;
-  let runStyle = "decimal";
-  let runStart = 1;
-
-  for (const block of blocks) {
-    if (block.type === "numberedList") {
-      if (!inRun) {
-        // Start of a new run — take style and startFrom from the first item
-        runStart = (block.props.startFrom as number) ?? 1;
-        runStyle = (block.props.numberStyle as string) ?? "decimal";
-        counter = runStart - 1;
-        inRun = true;
-      }
-      counter++;
-      map.set(block.id, { number: counter, numberStyle: runStyle, startFrom: runStart });
-    } else {
-      counter = 0;
-      inRun = false;
-    }
-  }
-
-  return map;
-}

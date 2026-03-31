@@ -5,7 +5,7 @@
 // ============================================================
 
 import type { Block, EditorDocument, Mark, Selection, BlockType } from "./types";
-import { isCollapsed, getTextLength, getPlainText } from "./types";
+import { isCollapsed, getTextLength, getPlainText, generateId } from "./types";
 import { findBlock, findBlockIndex, splitContent, mergeAdjacentSpans } from "./document";
 import {
   insertText,
@@ -15,13 +15,9 @@ import {
   toggleMark,
   setBlockTypeOp,
   insertBlockOp,
-  indentListItem,
-  outdentListItem,
   type ApplyResult,
 } from "./operations";
 import { getOrderedSelection } from "./selection";
-
-const LIST_TYPES = new Set(["bulletList", "numberedList"]);
 
 export interface InputContext {
   doc: EditorDocument;
@@ -125,17 +121,11 @@ export function handleKeyDown(
       return { result, handled: true };
     }
 
-    // If selection is in an empty list/todo/quote block, convert to paragraph or outdent
+    // If selection is in an empty todo/quote block, convert to paragraph
     if (!e.shiftKey) {
       const text = getPlainText(block.content);
-      const convertableTypes: BlockType[] = ["bulletList", "numberedList", "todo", "quote"];
+      const convertableTypes: BlockType[] = ["todo", "quote"];
       if (text === "" && convertableTypes.includes(block.type)) {
-        // If nested, outdent instead of converting to paragraph
-        const isNested = findBlockIndex(doc, block.id) < 0;
-        if (isNested && LIST_TYPES.has(block.type)) {
-          const result = outdentListItem(doc, block.id);
-          return { result: { ...result, selection: { anchor: selection.focus, focus: selection.focus } }, handled: true };
-        }
         const result = setBlockTypeOp(doc, block.id, "paragraph");
         return { result: { ...result, selection: { anchor: selection.focus, focus: selection.focus } }, handled: true };
       }
@@ -169,12 +159,6 @@ export function handleKeyDown(
     if (!block) return NOOP;
 
     if (selection.focus.offset === 0) {
-      // If this is a nested list item (child of another block), outdent it
-      const isNested = findBlockIndex(doc, selection.focus.blockId) < 0;
-      if (isNested && LIST_TYPES.has(block.type)) {
-        const result = outdentListItem(doc, selection.focus.blockId);
-        return { result, handled: true };
-      }
       // At the start of a block — merge backward or convert type
       const result = mergeBlock(doc, selection.focus.blockId, "backward");
       return { result, handled: true };
@@ -211,19 +195,7 @@ export function handleKeyDown(
   // ---- Tab ----
   if (e.key === "Tab") {
     e.preventDefault();
-    const focusBlock = findBlock(doc, selection.focus.blockId);
-    if (focusBlock && LIST_TYPES.has(focusBlock.type)) {
-      if (e.shiftKey) {
-        // Shift+Tab: outdent list item
-        const result = outdentListItem(doc, selection.focus.blockId);
-        return { result, handled: true };
-      }
-      // Tab: indent list item (nest under previous sibling)
-      const result = indentListItem(doc, selection.focus.blockId);
-      return { result, handled: true };
-    }
-
-    // Non-list blocks: insert two spaces
+    // Insert two spaces (list Tab/Shift+Tab is handled by ListBlock itself)
     const result = insertText(doc, selection.focus.blockId, selection.focus.offset, "  ");
     return { result, handled: true };
   }
@@ -318,12 +290,12 @@ function checkMarkdownShortcuts(
 
   // Bullet list: "- " or "* "
   if (text === "- " || text === "* ") {
-    return clearBlockText(doc, blockId, "bulletList");
+    return clearBlockTextToList(doc, blockId, "bullet");
   }
 
   // Numbered list: "1. "
   if (text === "1. ") {
-    return clearBlockText(doc, blockId, "numberedList");
+    return clearBlockTextToList(doc, blockId, "number");
   }
 
   // Todo: "[] " or "[ ] "
@@ -376,6 +348,30 @@ function clearBlockText(
   props: Record<string, any> = {},
 ): ApplyResult {
   const typeResult = setBlockTypeOp(doc, blockId, newType, props);
+  const newDoc = {
+    ...typeResult.doc,
+    blocks: typeResult.doc.blocks.map((b) =>
+      b.id === blockId ? { ...b, content: [] } : b,
+    ),
+  };
+  return {
+    doc: newDoc,
+    ops: typeResult.ops,
+    selection: { anchor: { blockId, offset: 0 }, focus: { blockId, offset: 0 } },
+  };
+}
+
+/** Helper: convert a paragraph to a list block and clear its text */
+function clearBlockTextToList(
+  doc: EditorDocument,
+  blockId: string,
+  kind: "bullet" | "number",
+): ApplyResult {
+  const listProps = {
+    listItems: [{ id: generateId(), content: [{ text: "" }], indent: 0 }],
+    levelStyles: [{ kind }],
+  };
+  const typeResult = setBlockTypeOp(doc, blockId, "list", listProps);
   const newDoc = {
     ...typeResult.doc,
     blocks: typeResult.doc.blocks.map((b) =>

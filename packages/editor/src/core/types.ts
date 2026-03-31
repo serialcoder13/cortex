@@ -13,8 +13,7 @@ export type BlockType =
   | "heading4"
   | "heading5"
   | "heading6"
-  | "bulletList"
-  | "numberedList"
+  | "list"
   | "todo"
   | "codeBlock"
   | "quote"
@@ -25,7 +24,6 @@ export type BlockType =
   | "divider"
   | "table"
   | "toc"
-  | "list"
   | "customComponent";
 
 /** Inline formatting marks */
@@ -62,14 +60,20 @@ export interface ListItem {
   id: string;
   content: TextSpan[];
   indent: number; // 0 = top-level, 1+ = nested
+  /** Per-item kind override — when items at the same indent have different kinds */
+  kind?: "bullet" | "number";
 }
 
 /** Style for a specific indent level in a list */
 export interface ListLevelStyle {
   kind: "bullet" | "number";
-  bulletStyle?: string; // disc, circle, square, dash, arrow
+  bulletStyle?: string; // disc, circle, square, dash, arrow, star, checkmark
   numberStyle?: string; // decimal, alpha-lower, alpha-upper, roman-lower, roman-upper
   startFrom?: number;
+  /** Marker size: "small" | "medium" | "large" — defaults to "medium" */
+  size?: string;
+  /** Marker color as CSS value — defaults to theme muted text */
+  color?: string;
 }
 
 /** Properties specific to certain block types */
@@ -97,8 +101,6 @@ export interface BlockProps {
   // custom component
   componentName?: string;
   componentProps?: Record<string, unknown>;
-  // numberedList (computed at render time)
-  number?: number;
   // generic extension point
   [key: string]: unknown;
 }

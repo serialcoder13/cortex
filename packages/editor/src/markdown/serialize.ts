@@ -5,6 +5,7 @@
 
 import type { Block, TextSpan, Mark } from "../core/types";
 import { serializeCustomComponent } from "../blocks/component-registry";
+import { formatNumber } from "../blocks/ListBlock";
 
 /**
  * Convert an array of blocks to a markdown string.
@@ -50,17 +51,12 @@ function serializeBlock(block: Block, index: number, siblings: Block[]): string 
     case "heading6":
       return `###### ${text}\n\n`;
 
-    case "bulletList":
-      return serializeListItem(`- ${text}`, block);
-
-    case "numberedList": {
-      const number = computeNumber(index, siblings);
-      return serializeListItem(`${number}. ${text}`, block);
-    }
+    case "list":
+      return serializeListMeta(block) + serializeListBlock(block) + "\n";
 
     case "todo": {
       const checkbox = block.props.checked ? "[x]" : "[ ]";
-      return serializeListItem(`- ${checkbox} ${text}`, block);
+      return `- ${checkbox} ${text}\n`;
     }
 
     case "codeBlock": {
@@ -130,9 +126,6 @@ function serializeBlock(block: Block, index: number, siblings: Block[]): string 
       return text + "\n\n";
     }
 
-    case "list":
-      return serializeListBlock(block) + "\n";
-
     case "toc": {
       const levels = block.props.tocLevels ?? 3;
       return `<!-- cortex-toc:${levels} -->\n\n`;
@@ -145,27 +138,6 @@ function serializeBlock(block: Block, index: number, siblings: Block[]): string 
     default:
       return text + "\n\n";
   }
-}
-
-/**
- * Serialize a list item, including any nested children.
- * For lists, consecutive items are joined without blank lines between them,
- * and the trailing double-newline is only added after the last item in a run.
- */
-function serializeListItem(line: string, block: Block): string {
-  let result = line + "\n";
-
-  // Serialize children indented by 2 spaces (for nested lists)
-  if (block.children.length > 0) {
-    const childMd = blocksToMarkdown(block.children).trimEnd();
-    const indented = childMd
-      .split("\n")
-      .map((l) => (l.trim() === "" ? "" : "  " + l))
-      .join("\n");
-    result += indented + "\n";
-  }
-
-  return result;
 }
 
 /**
@@ -185,25 +157,6 @@ function serializeQuote(text: string, block: Block): string {
   }
 
   return result + "\n";
-}
-
-/**
- * Compute sequential numbering for numbered list items.
- * Counts consecutive numberedList blocks preceding this one.
- */
-function computeNumber(index: number, siblings: Block[]): number {
-  // Find the start of this numbered list run
-  let runStart = index;
-  for (let i = index - 1; i >= 0; i--) {
-    if (siblings[i].type === "numberedList") {
-      runStart = i;
-    } else {
-      break;
-    }
-  }
-  // Use startFrom from the first block in the run, default to 1
-  const base = ((siblings[runStart].props.startFrom as number) ?? 1);
-  return base + (index - runStart);
 }
 
 /**
@@ -323,35 +276,83 @@ function serializeTableMeta(block: Block): string | null {
  * Serialize a list block (type="list") to markdown.
  * Each item becomes a line with appropriate indent and prefix.
  */
+/**
+ * Serialize list metadata (levelStyles with non-default values, per-item kinds)
+ * as a JSON HTML comment. Returns empty string if nothing worth persisting.
+ */
+function serializeListMeta(block: Block): string {
+  const levelStyles = (block.props.levelStyles ?? []) as Array<Record<string, unknown>>;
+  const items = (block.props.listItems ?? []) as Array<{ kind?: string }>;
+  const meta: Record<string, unknown> = {};
+
+  // Check if any levelStyle has non-default values worth persisting
+  const hasCustomStyles = levelStyles.some((s) =>
+    s.bulletStyle || s.numberStyle || s.size || s.color || s.startFrom,
+  );
+  if (hasCustomStyles) {
+    meta.levelStyles = levelStyles;
+  }
+
+  // Check if any items have per-item kind overrides
+  const hasItemKinds = items.some((it) => it.kind);
+  if (hasItemKinds) {
+    // Store as a sparse array: index → kind (only for items that have overrides)
+    const itemKinds: Record<number, string> = {};
+    items.forEach((it, idx) => {
+      if (it.kind) itemKinds[idx] = it.kind;
+    });
+    meta.itemKinds = itemKinds;
+  }
+
+  if (Object.keys(meta).length === 0) return "";
+  return `<!-- cortex-list:${JSON.stringify(meta)} -->\n`;
+}
+
 function serializeListBlock(block: Block): string {
   const items = (block.props.listItems ?? []) as Array<{
     content: Array<{ text: string; marks?: any[] }>;
     indent: number;
+    kind?: "bullet" | "number";
   }>;
   const levelStyles = (block.props.levelStyles ?? []) as Array<{
     kind: string;
+    numberStyle?: string;
     startFrom?: number;
   }>;
 
   // Track counters per indent level for numbering
   const counters: Record<number, number> = {};
+  const lastKindAtLevel: Record<number, string> = {};
   const lines: string[] = [];
 
   for (const item of items) {
     const lvl = item.indent;
     const style = levelStyles[lvl];
-    const kind = style?.kind ?? "bullet";
+    // Item-level kind overrides level style
+    const kind = item.kind ?? style?.kind ?? "bullet";
     const indent = "  ".repeat(lvl);
     const text = item.content.map((s) => s.text).join("");
 
     // Reset deeper counters when indent decreases
     for (const key of Object.keys(counters)) {
-      if (Number(key) > lvl) delete counters[Number(key)];
+      if (Number(key) > lvl) {
+        delete counters[Number(key)];
+        delete lastKindAtLevel[Number(key)];
+      }
     }
+
+    // Reset counter when kind switches at the same level
+    if (lastKindAtLevel[lvl] && lastKindAtLevel[lvl] !== kind) {
+      delete counters[lvl];
+    }
+    lastKindAtLevel[lvl] = kind;
 
     if (kind === "number") {
       counters[lvl] = (counters[lvl] ?? ((style?.startFrom ?? 1) - 1)) + 1;
-      lines.push(`${indent}${counters[lvl]}. ${text}`);
+      const numStyle = style?.numberStyle ?? "decimal";
+      const formatted = formatNumber(counters[lvl], numStyle);
+      const suffix = numStyle === "decimal" ? "." : ")";
+      lines.push(`${indent}${formatted}${suffix} ${text}`);
     } else {
       lines.push(`${indent}- ${text}`);
     }

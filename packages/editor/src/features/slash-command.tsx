@@ -16,7 +16,6 @@ import {
   Heading5,
   Heading6,
   List,
-  ListOrdered,
   CheckSquare,
   Code,
   Quote,
@@ -39,7 +38,7 @@ interface SlashCommandProps {
 
 const CATEGORIES: { label: string; types: BlockType[] }[] = [
   { label: "Basic", types: ["paragraph", "heading1", "heading2", "heading3", "heading4", "heading5", "heading6"] },
-  { label: "Lists", types: ["bulletList", "numberedList", "todo"] },
+  { label: "Lists", types: ["list", "todo"] },
   { label: "Advanced", types: ["codeBlock", "quote", "callout", "toggle", "toc", "customComponent"] },
   { label: "Media", types: ["divider", "image", "embed", "table"] },
 ];
@@ -55,8 +54,7 @@ function getBlockIcon(type: BlockType): React.ReactNode {
     heading4: <Heading4 size={ICON_SIZE} />,
     heading5: <Heading5 size={ICON_SIZE} />,
     heading6: <Heading6 size={ICON_SIZE} />,
-    bulletList: <List size={ICON_SIZE} />,
-    numberedList: <ListOrdered size={ICON_SIZE} />,
+    list: <List size={ICON_SIZE} />,
     todo: <CheckSquare size={ICON_SIZE} />,
     codeBlock: <Code size={ICON_SIZE} />,
     quote: <Quote size={ICON_SIZE} />,

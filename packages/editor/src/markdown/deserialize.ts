@@ -184,41 +184,27 @@ export function markdownToBlocks(markdown: string): Block[] {
       continue;
     }
 
-    // --- Bullet list: - or * (with nested child support) ---
-    const bulletMatch = line.match(/^[-*+]\s+(.*)/);
-    if (bulletMatch) {
-      const block = makeBlock("bulletList", parseInlineMarks(bulletMatch[1]));
-      i++;
-      // Collect indented child lines (2+ spaces or tab)
-      const childLines: string[] = [];
-      while (i < lines.length && /^(\s{2,}|\t)/.test(lines[i]) && lines[i].trim() !== "") {
-        childLines.push(lines[i].replace(/^(\s{2,}|\t)/, ""));
-        i++;
+    // --- List with optional metadata comment: <!-- cortex-list:{json} --> ---
+    const listMeta = parseListMetaComment(line);
+    if (listMeta !== null) {
+      let nextLine = i + 1;
+      while (nextLine < lines.length && lines[nextLine].trim() === "") nextLine++;
+      const listResult = parseListRun(lines, nextLine, listMeta);
+      if (listResult) {
+        blocks.push(listResult.block);
+        i = listResult.nextIndex;
+        continue;
       }
-      if (childLines.length > 0) {
-        block.children = markdownToBlocks(childLines.join("\n"));
-      }
-      blocks.push(block);
-      continue;
     }
 
-    // --- Numbered list: 1. or any digit. (with nested child support + offset) ---
-    const numberedMatch = line.match(/^(\d+)\.\s+(.*)/);
-    if (numberedMatch) {
-      const startNum = parseInt(numberedMatch[1]);
-      const block = makeBlock("numberedList", parseInlineMarks(numberedMatch[2]),
-        startNum !== 1 ? { startFrom: startNum } : {});
-      i++;
-      const childLines: string[] = [];
-      while (i < lines.length && /^(\s{2,}|\t)/.test(lines[i]) && lines[i].trim() !== "") {
-        childLines.push(lines[i].replace(/^(\s{2,}|\t)/, ""));
-        i++;
+    // --- List: bullet (- / * / +) or numbered (1.) items collected into a single list block ---
+    {
+      const listResult = parseListRun(lines, i);
+      if (listResult) {
+        blocks.push(listResult.block);
+        i = listResult.nextIndex;
+        continue;
       }
-      if (childLines.length > 0) {
-        block.children = markdownToBlocks(childLines.join("\n"));
-      }
-      blocks.push(block);
-      continue;
     }
 
     // --- Callout: > [!callout emoji] ---
@@ -642,6 +628,13 @@ function tokenizeInline(text: string): InlineToken[] {
   }
 
   while (i < text.length) {
+    // --- Backslash escape: \X → literal X for markdown-special characters ---
+    if (text[i] === "\\" && i + 1 < text.length && "\\`*_{}[]()#+-.!~|>".includes(text[i + 1])) {
+      buffer += text[i + 1];
+      i += 2;
+      continue;
+    }
+
     // --- Inline code: `...` ---
     if (text[i] === "`") {
       const end = text.indexOf("`", i + 1);
@@ -935,4 +928,192 @@ function makeBlock(
     children: [],
     props,
   };
+}
+
+// ---- List parser: collects consecutive bullet/numbered lines into a single list block ----
+
+interface ListParseResult {
+  block: Block;
+  nextIndex: number;
+}
+
+/** Parse a `<!-- cortex-list:{json} -->` comment. Returns parsed meta or null. */
+function parseListMetaComment(line: string): Record<string, unknown> | null {
+  const match = line.trim().match(/^<!--\s*cortex-list:(.*?)\s*-->$/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Try to parse a run of list items starting at line index `start`.
+ * Handles mixed bullet/numbered items and indented (nested) items.
+ * Returns null if the line at `start` is not a list item.
+ */
+function parseListRun(lines: string[], start: number, meta?: Record<string, unknown> | null): ListParseResult | null {
+  const items: Array<{ id: string; content: TextSpan[]; indent: number; kind?: "bullet" | "number" }> = [];
+  const kindByLevel = new Map<number, "bullet" | "number">();
+  const numberStyleByLevel = new Map<number, string>();
+  let i = start;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Determine indent level (2 spaces or 1 tab = 1 level)
+    const indentMatch = line.match(/^((?:  |\t)*)/);
+    const rawIndent = indentMatch ? indentMatch[1] : "";
+    const indent = rawIndent.replace(/\t/g, "  ").length / 2;
+
+    // Strip leading whitespace for pattern matching
+    const stripped = line.slice(rawIndent.length);
+
+    // Skip backslash-escaped markers (e.g. \* , \- , \1.)
+    if (stripped.startsWith("\\")) break;
+
+    // Bullet item: - , * , +
+    const bulletMatch = stripped.match(/^[-*+]\s+(.*)/);
+    if (bulletMatch) {
+      if (!kindByLevel.has(indent)) kindByLevel.set(indent, "bullet");
+      items.push({
+        id: generateId(),
+        content: parseInlineMarks(bulletMatch[1]),
+        indent,
+        kind: "bullet",
+      });
+      i++;
+      continue;
+    }
+
+    // Numbered item: 1. 2. etc (decimal)
+    const numberedMatch = stripped.match(/^(\d+)\.\s+(.*)/);
+    if (numberedMatch) {
+      if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
+      if (!numberStyleByLevel.has(indent)) numberStyleByLevel.set(indent, "decimal");
+      items.push({
+        id: generateId(),
+        content: parseInlineMarks(numberedMatch[2]),
+        indent,
+        kind: "number",
+      });
+      i++;
+      continue;
+    }
+
+    // Alpha-upper: A) B) etc
+    const alphaUpperMatch = stripped.match(/^([A-Z])\)\s+(.*)/);
+    if (alphaUpperMatch) {
+      if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
+      if (!numberStyleByLevel.has(indent)) numberStyleByLevel.set(indent, "alpha-upper");
+      items.push({
+        id: generateId(),
+        content: parseInlineMarks(alphaUpperMatch[2]),
+        indent,
+        kind: "number",
+      });
+      i++;
+      continue;
+    }
+
+    // Alpha-lower: a) b) etc
+    const alphaLowerMatch = stripped.match(/^([a-z])\)\s+(.*)/);
+    if (alphaLowerMatch) {
+      if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
+      if (!numberStyleByLevel.has(indent)) numberStyleByLevel.set(indent, "alpha-lower");
+      items.push({
+        id: generateId(),
+        content: parseInlineMarks(alphaLowerMatch[2]),
+        indent,
+        kind: "number",
+      });
+      i++;
+      continue;
+    }
+
+    // Roman-upper: I) II) III) etc
+    const romanUpperMatch = stripped.match(/^([IVXLCDM]+)\)\s+(.*)/);
+    if (romanUpperMatch) {
+      if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
+      if (!numberStyleByLevel.has(indent)) numberStyleByLevel.set(indent, "roman-upper");
+      items.push({
+        id: generateId(),
+        content: parseInlineMarks(romanUpperMatch[2]),
+        indent,
+        kind: "number",
+      });
+      i++;
+      continue;
+    }
+
+    // Roman-lower: i) ii) iii) etc
+    const romanLowerMatch = stripped.match(/^([ivxlcdm]+)\)\s+(.*)/);
+    if (romanLowerMatch) {
+      if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
+      if (!numberStyleByLevel.has(indent)) numberStyleByLevel.set(indent, "roman-lower");
+      items.push({
+        id: generateId(),
+        content: parseInlineMarks(romanLowerMatch[2]),
+        indent,
+        kind: "number",
+      });
+      i++;
+      continue;
+    }
+
+    // Not a list line — stop
+    break;
+  }
+
+  if (items.length === 0) return null;
+
+  // Build levelStyles array from collected kinds
+  const maxIndent = Math.max(...items.map((it) => it.indent));
+  const levelStyles: Array<Record<string, unknown>> = [];
+  for (let lvl = 0; lvl <= maxIndent; lvl++) {
+    const kind = kindByLevel.get(lvl) ?? "bullet";
+    const numberStyle = numberStyleByLevel.get(lvl);
+    const base: Record<string, unknown> = kind === "number" ? { kind, numberStyle } : { kind };
+    levelStyles.push(base);
+  }
+
+  // Merge saved metadata (colors, sizes, bulletStyle, etc.) from cortex-list comment
+  if (meta) {
+    const savedStyles = meta.levelStyles as Array<Record<string, unknown>> | undefined;
+    if (savedStyles) {
+      for (let lvl = 0; lvl < savedStyles.length; lvl++) {
+        const saved = savedStyles[lvl];
+        if (!saved) continue;
+        if (lvl < levelStyles.length) {
+          // Merge saved properties over detected ones (saved has priority for visual props)
+          for (const key of Object.keys(saved)) {
+            if (key !== "kind") {
+              levelStyles[lvl][key] = saved[key];
+            }
+          }
+        } else {
+          levelStyles.push(saved);
+        }
+      }
+    }
+
+    // Restore per-item kind overrides
+    const itemKinds = meta.itemKinds as Record<string, string> | undefined;
+    if (itemKinds) {
+      for (const [idxStr, kind] of Object.entries(itemKinds)) {
+        const idx = Number(idxStr);
+        if (idx < items.length && (kind === "bullet" || kind === "number")) {
+          items[idx].kind = kind;
+        }
+      }
+    }
+  }
+
+  const block = makeBlock("list", [], {
+    listItems: items,
+    levelStyles,
+  });
+
+  return { block, nextIndex: i };
 }

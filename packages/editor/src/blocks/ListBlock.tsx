@@ -1,9 +1,11 @@
 // ============================================================
-// ListBlock — single-block list editor with:
+// ListBlock — single self-contained block that renders an
+// entire list (bullet, numbered, or mixed). Features:
 //   • Nested items via indent levels
 //   • Per-level bullet/number style
 //   • Tab/Shift+Tab for indent/outdent
 //   • Enter to create new items, exit on empty
+//   • Backspace to merge/outdent/exit
 //   • Self-contained editing (like TableBlock)
 // ============================================================
 
@@ -24,19 +26,50 @@ function getCaretOffset(el: HTMLElement): number {
   return preRange.toString().length;
 }
 
+/** Place caret at a specific offset inside an element */
+function setCaretOffset(el: HTMLElement, offset: number): void {
+  const sel = window.getSelection();
+  if (!sel) return;
+  const range = document.createRange();
+
+  let remaining = offset;
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    const len = node.textContent?.length ?? 0;
+    if (remaining <= len) {
+      range.setStart(node, remaining);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return;
+    }
+    remaining -= len;
+    node = walker.nextNode();
+  }
+  // Fallback: place at end
+  range.selectNodeContents(el);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 // ---- Bullet / Number formatting ----
 
-const BULLET_CHARS: Record<string, string> = {
+export const BULLET_CHARS: Record<string, string> = {
   disc: "•",
   circle: "◦",
   square: "▪",
   dash: "–",
   arrow: "→",
+  star: "★",
+  checkmark: "✓",
 };
 
 const DEFAULT_BULLET_BY_LEVEL = ["disc", "circle", "square", "dash", "disc"];
+const DEFAULT_NUMBER_BY_LEVEL = ["decimal", "roman-lower", "alpha-lower", "decimal", "roman-lower"];
 
-function formatNumber(n: number, style: string): string {
+export function formatNumber(n: number, style: string): string {
   switch (style) {
     case "alpha-lower":
       return String.fromCharCode(96 + ((n - 1) % 26) + 1);
@@ -67,25 +100,41 @@ function toRoman(num: number): string {
 
 // ---- Compute numbering per indent level ----
 
+/** Resolve the effective kind for an item: item override > level style > "bullet" */
+function getItemKind(item: ListItem, levelStyles: ListLevelStyle[]): "bullet" | "number" {
+  return item.kind ?? levelStyles[item.indent]?.kind ?? "bullet";
+}
+
 function computeItemNumbers(
   items: ListItem[],
   levelStyles: ListLevelStyle[],
 ): Map<string, number> {
   const map = new Map<string, number>();
-  // Track counters per indent level
   const counters: Record<number, number> = {};
+  // Track the last kind seen at each level to reset counters on kind switch
+  const lastKindAtLevel: Record<number, "bullet" | "number"> = {};
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     const lvl = item.indent;
     const style = levelStyles[lvl];
+    const kind = getItemKind(item, levelStyles);
 
     // Reset deeper levels when we encounter a shallower item
     for (const key of Object.keys(counters)) {
-      if (Number(key) > lvl) delete counters[Number(key)];
+      if (Number(key) > lvl) {
+        delete counters[Number(key)];
+        delete lastKindAtLevel[Number(key)];
+      }
     }
 
-    if (!style || style.kind === "number") {
+    // Reset counter when kind switches at the same level (e.g. number → bullet → number)
+    if (lastKindAtLevel[lvl] && lastKindAtLevel[lvl] !== kind) {
+      delete counters[lvl];
+    }
+    lastKindAtLevel[lvl] = kind;
+
+    if (kind === "number") {
       counters[lvl] = (counters[lvl] ?? ((style?.startFrom ?? 1) - 1)) + 1;
       map.set(item.id, counters[lvl]);
     }
@@ -95,9 +144,17 @@ function computeItemNumbers(
 
 // ---- Individual list item cell ----
 
+const MARKER_SIZE_MAP: Record<string, string> = {
+  small: "0.7em",
+  medium: "0.85em",
+  large: "1.1em",
+};
+
 function ListItemCell({
   item,
   marker,
+  markerColor,
+  markerSize,
   indent,
   readOnly,
   onCommit,
@@ -106,6 +163,8 @@ function ListItemCell({
 }: {
   item: ListItem;
   marker: React.ReactNode;
+  markerColor?: string;
+  markerSize?: string;
   indent: number;
   readOnly?: boolean;
   onCommit: (id: string, text: string) => void;
@@ -129,17 +188,17 @@ function ListItemCell({
       style={{
         display: "flex",
         gap: 6,
-        paddingLeft: indent * 24 + 4,
         alignItems: "baseline",
         padding: "1px 0",
+        paddingLeft: 4,
       }}
     >
       <span
         style={{
           userSelect: "none",
-          color: "var(--text-muted, #999)",
+          color: markerColor || "var(--text-muted, #999)",
           lineHeight: 1.625,
-          fontSize: "0.85em",
+          fontSize: MARKER_SIZE_MAP[markerSize ?? "medium"] ?? "0.85em",
           minWidth: "1.2em",
           textAlign: "right",
           flexShrink: 0,
@@ -172,7 +231,6 @@ function ListItemCell({
         }}
         onKeyDown={(e) => {
           if (e.key === "Tab" || e.key === "Enter" || e.key === "Backspace") {
-            // Let ListBlock handle these
             onKeyDown(item.id, e);
             return;
           }
@@ -201,10 +259,28 @@ export function ListBlock({ block, readOnly }: { block: Block; readOnly?: boolea
   const [levelStyles, setLevelStyles] = useState<ListLevelStyle[]>(
     () => (block.props.levelStyles as ListLevelStyle[]) ?? [{ kind: "bullet" }],
   );
-  const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  const [, setActiveItemId] = useState<string | null>(null);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-focus the first item when the list block is freshly created
+  const didAutoFocus = useRef(false);
+  useEffect(() => {
+    if (didAutoFocus.current || readOnly) return;
+    // Only auto-focus if the list has a single empty item (freshly created)
+    if (items.length === 1 && items[0].content.every((s) => s.text === "")) {
+      didAutoFocus.current = true;
+      requestAnimationFrame(() => {
+        const el = containerRef.current?.querySelector(
+          `[data-list-item-id="${items[0].id}"] [data-content]`,
+        ) as HTMLElement | null;
+        el?.focus();
+      });
+    } else {
+      didAutoFocus.current = true;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync items from props when changed externally
   useEffect(() => {
@@ -261,26 +337,26 @@ export function ListBlock({ block, readOnly }: { block: Block; readOnly?: boolea
   // ---- Focus a specific item by ID ----
 
   const focusItem = useCallback(
-    (itemId: string, atEnd = false) => {
-      // Double rAF to ensure React has rendered the new items
-      requestAnimationFrame(() => {
+    (itemId: string, atEnd = false, caretOffset?: number) => {
+      const tryFocus = (attempts: number) => {
         requestAnimationFrame(() => {
           const el = containerRef.current?.querySelector(
             `[data-list-item-id="${itemId}"] [data-content]`,
           ) as HTMLElement | null;
-          if (el) {
-            el.focus();
-            if (atEnd && el.textContent) {
-              const range = document.createRange();
-              const sel = window.getSelection();
-              range.selectNodeContents(el);
-              range.collapse(false);
-              sel?.removeAllRanges();
-              sel?.addRange(range);
-            }
+          if (!el) {
+            if (attempts > 0) tryFocus(attempts - 1);
+            return;
+          }
+          el.focus();
+          if (caretOffset !== undefined) {
+            setCaretOffset(el, caretOffset);
+          } else if (atEnd && el.textContent) {
+            setCaretOffset(el, el.textContent.length);
           }
         });
-      });
+      };
+      // Give React 3 frames to commit the DOM update
+      tryFocus(3);
     },
     [],
   );
@@ -334,7 +410,6 @@ export function ListBlock({ block, readOnly }: { block: Block; readOnly?: boolea
         e.preventDefault();
         e.stopPropagation();
 
-        // Commit current text first
         const el = e.currentTarget as HTMLElement;
         const text = el.textContent ?? "";
 
@@ -348,10 +423,24 @@ export function ListBlock({ block, readOnly }: { block: Block; readOnly?: boolea
         }
 
         if (text === "" && item.indent === 0 && itemsRef.current.length === 1) {
-          // Only item and empty — convert to paragraph (dispatch delete-list event)
+          // Only item and empty — convert to paragraph
           globalThis.dispatchEvent(
             new CustomEvent("cortex-list-exit", {
               detail: { blockId: block.id },
+            }),
+          );
+          return;
+        }
+
+        if (text === "" && item.indent === 0) {
+          // Empty top-level item with siblings — remove this item and
+          // exit list, inserting a paragraph after the list block
+          const newItems = [...itemsRef.current];
+          newItems.splice(idx, 1);
+          dispatchUpdate(newItems);
+          globalThis.dispatchEvent(
+            new CustomEvent("cortex-list-exit-split", {
+              detail: { blockId: block.id, afterIndex: idx },
             }),
           );
           return;
@@ -366,6 +455,7 @@ export function ListBlock({ block, readOnly }: { block: Block; readOnly?: boolea
           id: generateId(),
           content: [{ text: afterText }],
           indent: item.indent,
+          kind: item.kind,
         };
         const newItems = [...itemsRef.current];
         newItems[idx] = { ...item, content: [{ text: beforeText }] as TextSpan[] };
@@ -413,7 +503,7 @@ export function ListBlock({ block, readOnly }: { block: Block; readOnly?: boolea
             newItems[idx - 1] = { ...prevItem, content: [{ text: mergedText }] as TextSpan[] };
             newItems.splice(idx, 1);
             dispatchUpdate(newItems);
-            focusItem(prevItem.id, true);
+            focusItem(prevItem.id, false, prevText.length);
             return;
           }
         }
@@ -434,11 +524,11 @@ export function ListBlock({ block, readOnly }: { block: Block; readOnly?: boolea
   const getMarker = (item: ListItem): React.ReactNode => {
     const lvl = item.indent;
     const style = levelStyles[lvl];
-    const kind = style?.kind ?? "bullet";
+    const kind = getItemKind(item, levelStyles);
 
     if (kind === "number") {
       const num = numbers.get(item.id) ?? 1;
-      const fmt = style?.numberStyle ?? "decimal";
+      const fmt = style?.numberStyle ?? DEFAULT_NUMBER_BY_LEVEL[lvl % DEFAULT_NUMBER_BY_LEVEL.length];
       const formatted = formatNumber(num, fmt);
       const suffix = fmt === "decimal" ? "." : ")";
       return `${formatted}${suffix}`;
@@ -455,18 +545,23 @@ export function ListBlock({ block, readOnly }: { block: Block; readOnly?: boolea
       data-list-block
       style={{ margin: "2px 0" }}
     >
-      {items.map((item) => (
-        <ListItemCell
-          key={item.id}
-          item={item}
-          marker={getMarker(item)}
-          indent={item.indent}
-          readOnly={readOnly}
-          onCommit={handleCommit}
-          onFocus={handleFocus}
-          onKeyDown={handleItemKeyDown}
-        />
-      ))}
+      {items.map((item) => {
+        const lvlStyle = levelStyles[item.indent];
+        return (
+          <ListItemCell
+            key={item.id}
+            item={item}
+            marker={getMarker(item)}
+            markerColor={lvlStyle?.color}
+            markerSize={lvlStyle?.size}
+            indent={item.indent}
+            readOnly={readOnly}
+            onCommit={handleCommit}
+            onFocus={handleFocus}
+            onKeyDown={handleItemKeyDown}
+          />
+        );
+      })}
     </div>
   );
 }

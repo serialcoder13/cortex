@@ -255,8 +255,8 @@ function deleteSelection(doc: EditorDocument, sel: Selection): ApplyResult {
 /** Detect block type from a line of pasted text */
 function detectBlockType(line: string): BlockType {
   if (/^#{1,3}\s/.exec(line)) return `heading${line.match(/^(#+)/)![1]!.length}` as BlockType;
-  if (/^[-*]\s/.exec(line)) return "bulletList";
-  if (/^\d+\.\s/.exec(line)) return "numberedList";
+  if (/^[-*]\s/.exec(line)) return "paragraph";
+  if (/^\d+\.\s/.exec(line)) return "paragraph";
   if (/^\[[ x]\]\s/i.exec(line)) return "todo";
   if (/^>\s/.exec(line)) return "quote";
   if (/^---$|^\*\*\*$/.exec(line)) return "divider";
@@ -269,8 +269,6 @@ function cleanLinePrefix(line: string, type: BlockType): string {
     case "heading1": return line.replace(/^#\s/, "");
     case "heading2": return line.replace(/^##\s/, "");
     case "heading3": return line.replace(/^###\s/, "");
-    case "bulletList": return line.replace(/^[-*]\s/, "");
-    case "numberedList": return line.replace(/^\d+\.\s/, "");
     case "todo": return line.replace(/^\[[ x]\]\s/i, "");
     case "quote": return line.replace(/^>\s/, "");
     case "divider": return "";
