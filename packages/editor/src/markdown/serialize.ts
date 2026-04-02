@@ -296,8 +296,14 @@ function serializeListMeta(block: Block): string {
   const meta: Record<string, unknown> = {};
 
   // Check if any levelStyle has non-default values worth persisting
+  // Default values that don't need saving: kind (always inferred from markdown),
+  // numberStyle "decimal" (default), bulletStyle undefined, size/color undefined
   const hasCustomStyles = levelStyles.some((s) =>
-    s.bulletStyle || s.numberStyle || s.size || s.color || s.startFrom,
+    s.bulletStyle ||
+    (s.numberStyle && s.numberStyle !== "decimal") ||
+    s.size ||
+    s.color ||
+    s.startFrom,
   );
   if (hasCustomStyles) {
     meta.levelStyles = levelStyles;

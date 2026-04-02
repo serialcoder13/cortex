@@ -1035,37 +1035,7 @@ function parseListRun(lines: string[], start: number, meta?: Record<string, unkn
       continue;
     }
 
-    // Alpha-upper: A) B) etc
-    const alphaUpperMatch = stripped.match(/^([A-Z])\)\s+(.*)/);
-    if (alphaUpperMatch) {
-      if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
-      if (!numberStyleByLevel.has(indent)) numberStyleByLevel.set(indent, "alpha-upper");
-      items.push({
-        id: generateId(),
-        content: parseInlineMarks(alphaUpperMatch[2]),
-        indent,
-        kind: "number",
-      });
-      i++;
-      continue;
-    }
-
-    // Alpha-lower: a) b) etc
-    const alphaLowerMatch = stripped.match(/^([a-z])\)\s+(.*)/);
-    if (alphaLowerMatch) {
-      if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
-      if (!numberStyleByLevel.has(indent)) numberStyleByLevel.set(indent, "alpha-lower");
-      items.push({
-        id: generateId(),
-        content: parseInlineMarks(alphaLowerMatch[2]),
-        indent,
-        kind: "number",
-      });
-      i++;
-      continue;
-    }
-
-    // Roman-upper: I) II) III) etc
+    // Roman-upper: I) II) III) IV) etc (checked before alpha to avoid I→alpha-upper)
     const romanUpperMatch = stripped.match(/^([IVXLCDM]+)\)\s+(.*)/);
     if (romanUpperMatch) {
       if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
@@ -1080,7 +1050,7 @@ function parseListRun(lines: string[], start: number, meta?: Record<string, unkn
       continue;
     }
 
-    // Roman-lower: i) ii) iii) etc
+    // Roman-lower: i) ii) iii) iv) etc (checked before alpha to avoid i→alpha-lower)
     const romanLowerMatch = stripped.match(/^([ivxlcdm]+)\)\s+(.*)/);
     if (romanLowerMatch) {
       if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
@@ -1088,6 +1058,36 @@ function parseListRun(lines: string[], start: number, meta?: Record<string, unkn
       items.push({
         id: generateId(),
         content: parseInlineMarks(romanLowerMatch[2]),
+        indent,
+        kind: "number",
+      });
+      i++;
+      continue;
+    }
+
+    // Alpha-upper: A) B) etc (only non-roman single letters)
+    const alphaUpperMatch = stripped.match(/^([A-Z])\)\s+(.*)/);
+    if (alphaUpperMatch) {
+      if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
+      if (!numberStyleByLevel.has(indent)) numberStyleByLevel.set(indent, "alpha-upper");
+      items.push({
+        id: generateId(),
+        content: parseInlineMarks(alphaUpperMatch[2]),
+        indent,
+        kind: "number",
+      });
+      i++;
+      continue;
+    }
+
+    // Alpha-lower: a) b) etc (only non-roman single letters)
+    const alphaLowerMatch = stripped.match(/^([a-z])\)\s+(.*)/);
+    if (alphaLowerMatch) {
+      if (!kindByLevel.has(indent)) kindByLevel.set(indent, "number");
+      if (!numberStyleByLevel.has(indent)) numberStyleByLevel.set(indent, "alpha-lower");
+      items.push({
+        id: generateId(),
+        content: parseInlineMarks(alphaLowerMatch[2]),
         indent,
         kind: "number",
       });
@@ -1109,6 +1109,14 @@ function parseListRun(lines: string[], start: number, meta?: Record<string, unkn
     const numberStyle = numberStyleByLevel.get(lvl);
     const base: Record<string, unknown> = kind === "number" ? { kind, numberStyle } : { kind };
     levelStyles.push(base);
+  }
+
+  // Strip per-item kind when it matches the level style (only keep true overrides)
+  for (const item of items) {
+    const levelKind = levelStyles[item.indent]?.kind ?? "bullet";
+    if (item.kind === levelKind) {
+      delete item.kind;
+    }
   }
 
   // Merge saved metadata (colors, sizes, bulletStyle, etc.) from cortex-list comment
